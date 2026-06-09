@@ -1,0 +1,29 @@
+{
+  "name": "dek-defense-hybrid",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "dev:lan": "vite --host 0.0.0.0",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "5.0.4",
+    "firebase": "11.10.0",
+    "mammoth": "1.9.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "vite": "7.1.10"
+  },
+  "devDependencies": {
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "typescript": "5.7.3"
+  },
+  "engines": {
+    "node": ">=20 <=22"
+  }
+}

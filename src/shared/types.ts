@@ -1,0 +1,219 @@
+export type RegistrationStatus =
+  | 'not_registered'
+  | 'started'
+  | 'registered'
+  | 'manually_added'
+  | 'late_registered'
+
+export type PresentationStatus =
+  | 'missing'
+  | 'uploading'
+  | 'uploaded'
+  | 'validating'
+  | 'ready'
+  | 'error'
+  | 'conversion_required'
+
+export type DefenseStatus =
+  | 'waiting'
+  | 'presenting'
+  | 'defended'
+  | 'absent'
+  | 'problem'
+  | 'postponed'
+
+export type EventType =
+  | 'SESSION_CREATED'
+  | 'IMPORT_REVIEW_CREATED'
+  | 'IMPORT_CONFIRMED'
+  | 'STUDENT_EDITED'
+  | 'STUDENT_DELETED'
+  | 'STUDENT_REGISTERED'
+  | 'PRESENTATION_UPLOADED'
+  | 'QUEUE_REORDERED'
+  | 'REGISTRATION_LOCK_CHANGED'
+  | 'PRESENTATION_OPEN_REQUESTED'
+  | 'PRESENTATION_OPENED'
+  | 'DEFENSE_STATUS_CHANGED'
+  | 'NOTE_ADDED'
+  | 'BACKUP_EXPORTED'
+
+export interface DefenseSession {
+  id: string
+  title: string
+  date: string
+  groupNames: string[]
+  registrationOpenFrom: string
+  registrationOpenTo: string
+  defenseStartsAt: string
+  manualRegistrationOpen: boolean
+  isRegistrationLocked: boolean
+  publicToken: string
+  stationId?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface Group {
+  id: string
+  name: string
+  sessionId: string
+  specialtyCode?: string
+  specialtyName?: string
+  educationProgram?: string
+  studyForm?: string
+}
+
+export interface Student {
+  id: string
+  sessionId: string
+  groupId: string
+  groupName: string
+  fullName: string
+  thesisTitleOriginal: string
+  thesisTitleEdited: string
+  supervisorOriginal: string
+  supervisorEdited: string
+  consultant?: string
+  specialtyCode?: string
+  specialtyName?: string
+  educationProgram?: string
+  studyForm?: string
+  isAllowedToRegister: boolean
+  registrationStatus: RegistrationStatus
+  presentationStatus: PresentationStatus
+  defenseStatus: DefenseStatus
+  registeredAt?: string
+  queuePosition?: number
+  notes?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface PresentationMeta {
+  id: string
+  sessionId: string
+  studentId: string
+  fileName: string
+  originalFileName: string
+  fileSize: number
+  mimeType: string
+  extension: string
+  version: number
+  status: PresentationStatus
+  uploadedAt: string
+  localOnly: boolean
+  storageKey?: string
+  convertedPdfReady?: boolean
+  error?: string
+}
+
+export interface QueueItem {
+  id: string
+  sessionId: string
+  studentId: string
+  position: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface Command {
+  id: string
+  sessionId: string
+  type: 'open_presentation' | 'close_presentation' | 'set_current_student'
+  studentId?: string
+  targetStationId?: string
+  status: 'pending' | 'running' | 'done' | 'error'
+  error?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface Station {
+  id: string
+  name: string
+  activeSessionId?: string
+  online: boolean
+  localUploadUrl?: string
+  currentStudentId?: string
+  lastHeartbeat: string
+}
+
+export interface ProtocolRow {
+  studentId: string
+  order: number
+  pagesCount?: string
+  drawingsCount?: string
+  supervisorReview?: string
+  reviewerGrade?: string
+  commissionMembersCount?: string
+  questions?: string
+  commissionDecision?: string
+  diplomaType?: string
+}
+
+export interface ProtocolSnapshot {
+  id: string
+  sessionId: string
+  title: string
+  date: string
+  groupName?: string
+  rows: ProtocolRow[]
+  defaultValues: Partial<ProtocolRow>
+  createdAt: string
+  updatedAt: string
+}
+
+export interface EventLogItem {
+  id: string
+  sessionId?: string
+  type: EventType
+  actor: 'admin' | 'student' | 'agent' | 'system'
+  message: string
+  payload?: Record<string, unknown>
+  createdAt: string
+}
+
+export interface ImportDraftStudent {
+  tempId: string
+  selected: boolean
+  rowNumber?: number
+  fullName: string
+  groupName: string
+  thesisTitle: string
+  supervisor: string
+  consultant?: string
+  warning?: string
+}
+
+export interface ImportReview {
+  id: string
+  sessionId: string
+  sourceName: string
+  specialtyCode?: string
+  specialtyName?: string
+  educationProgram?: string
+  studyForm?: string
+  groupName: string
+  students: ImportDraftStudent[]
+  createdAt: string
+}
+
+export interface AppState {
+  sessions: DefenseSession[]
+  groups: Group[]
+  students: Student[]
+  presentations: PresentationMeta[]
+  queue: QueueItem[]
+  commands: Command[]
+  stations: Station[]
+  protocols: ProtocolSnapshot[]
+  events: EventLogItem[]
+  importReviews: ImportReview[]
+}
+
+export interface AppRepository {
+  getState(): Promise<AppState>
+  saveState(state: AppState): Promise<void>
+  subscribe?(callback: (state: AppState) => void): () => void
+}

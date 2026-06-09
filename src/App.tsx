@@ -157,6 +157,11 @@ function RoleHeader({ role, page, setPage, resetRole, activeSessionTitle }: {
   )
 }
 
+function SyncWarningBanner({ message }: { message: string }) {
+  if (!message) return null
+  return <div className="sync-warning-banner">{message}</div>
+}
+
 export default function App() {
   const [state, setStateRaw] = useState<AppState>(emptyState())
   const [loaded, setLoaded] = useState(false)
@@ -279,6 +284,7 @@ export default function App() {
     return (
       <>
         <RoleHeader role="admin" page="admin" setPage={setPage} resetRole={resetRole} activeSessionTitle={activeSession?.title} />
+        <SyncWarningBanner message={syncWarning} />
         <AdminPage state={state} setState={setState} activeSession={activeSession} setActiveSessionId={selectActiveSession} />
       </>
     )
@@ -289,6 +295,7 @@ export default function App() {
   return (
     <>
       <RoleHeader role="defense" page={defensePage} setPage={setPage} resetRole={resetRole} activeSessionTitle={activeSession?.title} />
+      <SyncWarningBanner message={syncWarning} />
       {defensePage === 'student' && <StudentPage state={state} setState={setState} activeSession={activeSession} publicMode />}
       {defensePage === 'agent' && <AgentPage state={state} setState={setState} activeSession={activeSession} />}
       {defensePage === 'display' && <DisplayPage state={state} activeSession={activeSession} />}

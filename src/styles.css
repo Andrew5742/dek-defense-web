@@ -228,6 +228,13 @@ h3 { margin: 0 0 10px; }
   background: #7f1d1d;
 }
 .locked-nav { flex: 1; justify-content: center; }
+.sync-warning-banner {
+  border-bottom: 1px solid #f59e0b;
+  background: #fffbeb;
+  color: #78350f;
+  padding: 10px 18px;
+  font-size: 14px;
+}
 @media (max-width: 860px) {
   .entry-grid { grid-template-columns: 1fr; }
   .entry-title-row { align-items: stretch; flex-direction: column; }

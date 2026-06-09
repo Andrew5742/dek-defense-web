@@ -16,8 +16,8 @@ export function AgentPage({ state, setState, activeSession }: Props) {
     <div className="panel">
       <h2>Стан агента</h2>
       <p><b>Сесія:</b> {activeSession.title}</p>
-      <p><b>Роль:</b> у фінальній версії саме цей модуль на ПК доповідача зберігає презентації, конвертує PPTX/PPT/ODP у PDF і відкриває PDF fullscreen за командою з адмінки.</p>
-      <p><b>Поточний web-демо режим:</b> PDF відкривається в окремому PDF-вікні. PPTX/PPT/ODP не завантажуються назад і не відкриваються напряму — вони отримують статус “потрібна конвертація”.</p>
+      <p><b>Роль:</b> у фінальній версії саме цей модуль на ПК доповідача зберігає презентації, конвертує PPTX/PPT/ODP у PDF через LibreOffice і відкриває PDF fullscreen за командою з адмінки.</p>
+      <p><b>Поточний GitHub Pages режим:</b> PDF відкривається всередині системи fullscreen overlay. PPTX/PPT/ODP отримують статус “потрібна конвертація”, бо браузер без Local Defense Agent не може запускати LibreOffice.</p>
     </div>
     <div className="panel">
       <h2>Команди від адмінки</h2>

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { AppState, DefenseSession, ImportReview, ProtocolSnapshot, Student } from '../shared/types'
 import { downloadTextFile, formatLocalDateTime, nowIso, todayLocalDate, uid } from '../shared/utils'
-import { addManualStudent, confirmImportReview, createSession, removeFromQueue, removeStudent, reorderQueue, requestOpenPresentation, saveImportReview, saveProtocol, setDefenseStatus, setRegistrationLock, updateImportReview, updateStudent } from '../services/actions'
+import { addManualStudent, addToQueue, confirmImportReview, createSession, removeFromQueue, removeStudent, reorderQueue, requestOpenPresentation, saveImportReview, saveProtocol, setDefenseStatus, setRegistrationLock, updateImportReview, updateStudent } from '../services/actions'
 import { importDocx, importFromPastedText } from '../services/importService'
 import { StatusBadge } from '../components/StatusBadge'
 import { StudentEditor } from '../components/StudentEditor'
@@ -233,7 +233,7 @@ function QueuePanel({ state, setState, session, onEdit }: { state: AppState; set
     </div>
     <div className="panel">
       <h2>Не в черзі</h2>
-      {notQueued.map((s) => <div className="list-row" key={s.id}><span>{s.fullName} · {s.groupName}</span><div className="actions compact-actions"><button onClick={() => setState(updateStudent(state, s.id, { registrationStatus: 'manually_added' }))}>Додати вручну</button><button className="danger" onClick={() => {
+      {notQueued.map((s) => <div className="list-row" key={s.id}><span>{s.fullName} · {s.groupName}</span><div className="actions compact-actions"><button onClick={() => setState(addToQueue(state, s.id, 'admin'))}>Додати вручну</button><button className="danger" onClick={() => {
         if (confirm(`Видалити студента з системи?\n\n${s.fullName}\n\nБуде прибрано з черги, протоколів і статусів презентації.`)) {
           setState(removeStudent(state, s.id))
         }

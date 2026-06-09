@@ -234,16 +234,18 @@ export function addToQueue(state: AppState, studentId: string, actor: 'admin' | 
   if (!student) return state
   const existing = state.queue.find((q) => q.studentId === studentId)
   let next = state
+  let queuePosition = existing?.position
   if (!existing) {
     const max = Math.max(0, ...state.queue.filter((q) => q.sessionId === student.sessionId).map((q) => q.position))
-    const item: QueueItem = { id: uid('queue'), sessionId: student.sessionId, studentId, position: max + 1, createdAt: nowIso(), updatedAt: nowIso() }
+    queuePosition = max + 1
+    const item: QueueItem = { id: uid('queue'), sessionId: student.sessionId, studentId, position: queuePosition, createdAt: nowIso(), updatedAt: nowIso() }
     next = { ...state, queue: [...state.queue, item] }
   }
   next = {
     ...next,
     students: next.students.map((s) =>
       s.id === studentId
-        ? { ...s, registrationStatus: actor === 'student' ? 'registered' : s.registrationStatus === 'not_registered' ? 'manually_added' : s.registrationStatus, registeredAt: s.registeredAt || nowIso(), queuePosition: existing?.position, updatedAt: nowIso() }
+        ? { ...s, registrationStatus: actor === 'student' ? 'registered' : s.registrationStatus === 'not_registered' ? 'manually_added' : s.registrationStatus, registeredAt: s.registeredAt || nowIso(), queuePosition, updatedAt: nowIso() }
         : s
     )
   }

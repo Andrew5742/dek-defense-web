@@ -44,7 +44,7 @@ export function AgentPage({ state, setState, activeSession }: Props) {
         const s = students.get(p.studentId)
         return <tr key={p.id}>
           <td>{s?.fullName}</td><td>{p.originalFileName}</td><td>{p.extension.toUpperCase()}</td><td>{p.version}</td><td><StatusBadge value={p.status} /></td>
-          <td><button onClick={async () => setState(await openLatestPresentation(state, p.studentId))}>{p.extension === 'pdf' ? 'Відкрити PDF' : 'Перевірити / потрібна конвертація'}</button></td>
+          <td><button onClick={async () => setState(await openLatestPresentation(state, p.studentId, p.id))}>{p.extension === 'pdf' ? 'Відкрити PDF' : 'Перевірити / потрібна конвертація'}</button></td>
         </tr>
       })}</tbody></table>
     </div>

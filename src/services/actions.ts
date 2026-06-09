@@ -407,9 +407,11 @@ function openPdfBlob(blob: Blob, title: string) {
   void overlay.requestFullscreen?.().catch(() => undefined)
 }
 
-export async function openLatestPresentation(state: AppState, studentId: string): Promise<AppState> {
+export async function openLatestPresentation(state: AppState, studentId: string, presentationId?: string): Promise<AppState> {
   const student = state.students.find((s) => s.id === studentId)
-  const pres = state.presentations.filter((p) => p.studentId === studentId).sort((a, b) => b.version - a.version)[0]
+  const pres = presentationId
+    ? state.presentations.find((p) => p.id === presentationId && p.studentId === studentId)
+    : state.presentations.filter((p) => p.studentId === studentId).sort((a, b) => b.version - a.version)[0]
   if (!student || !pres?.storageKey) return state
 
   if (pres.extension !== 'pdf' || !pres.convertedPdfReady) {

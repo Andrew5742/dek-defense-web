@@ -17,6 +17,10 @@ const FAKE_ADMIN_EMAIL = 'admin@dek.local'
 const FAKE_ADMIN_PASSWORD = 'dek2026'
 const repository: AppRepository = firebaseRepository || localRepository
 
+function resolveActiveSessionId(state: AppState): string {
+  return state.activeSessionId || state.sessions[0]?.id || ''
+}
+
 function normalizeDefensePage(value: string | null): Page {
   if (value === 'agent' || value === 'display' || value === 'student') return value
   if (value === 'presentation' || value === 'station' || value === 'defense') return 'student'
@@ -183,11 +187,11 @@ export default function App() {
       setStateRaw(loadedState)
       const params = new URLSearchParams(location.search)
       const sessionFromUrl = params.get('session')
-      setActiveSessionId(sessionFromUrl || loadedState.sessions[0]?.id || '')
+      setActiveSessionId(sessionFromUrl || resolveActiveSessionId(loadedState))
       setLoaded(true)
       unsubscribe = repo.subscribe?.((nextState) => {
         setStateRaw(nextState)
-        setActiveSessionId((current) => current || nextState.sessions[0]?.id || '')
+        setActiveSessionId(sessionFromUrl || resolveActiveSessionId(nextState))
       })
     }
 
@@ -203,7 +207,12 @@ export default function App() {
     void activeRepository.saveState(next).catch((err) => {
       setSyncWarning(`${err instanceof Error ? err.message : 'Не вдалося зберегти стан'}. Дані на цьому ПК можуть бути не синхронізовані.`)
     })
-    if (!activeSessionId && next.sessions[0]) setActiveSessionId(next.sessions[0].id)
+    if (!activeSessionId && next.sessions[0]) setActiveSessionId(resolveActiveSessionId(next))
+  }
+
+  function selectActiveSession(id: string) {
+    setActiveSessionId(id)
+    setState({ ...state, activeSessionId: id })
   }
 
   async function loginAdmin(email: string, password: string) {
@@ -270,7 +279,7 @@ export default function App() {
     return (
       <>
         <RoleHeader role="admin" page="admin" setPage={setPage} resetRole={resetRole} activeSessionTitle={activeSession?.title} />
-        <AdminPage state={state} setState={setState} activeSession={activeSession} setActiveSessionId={setActiveSessionId} />
+        <AdminPage state={state} setState={setState} activeSession={activeSession} setActiveSessionId={selectActiveSession} />
       </>
     )
   }

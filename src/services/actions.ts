@@ -29,7 +29,7 @@ export function createSession(state: AppState, input: Partial<DefenseSession>): 
     date: input.date || todayLocalDate(),
     groupNames: input.groupNames || [],
     registrationOpenFrom: input.registrationOpenFrom || '08:00',
-    registrationOpenTo: input.registrationOpenTo || '09:00',
+    registrationOpenTo: input.registrationOpenTo || '23:59',
     defenseStartsAt: input.defenseStartsAt || '09:05',
     manualRegistrationOpen: false,
     isRegistrationLocked: false,
@@ -38,7 +38,7 @@ export function createSession(state: AppState, input: Partial<DefenseSession>): 
     createdAt: now,
     updatedAt: now
   }
-  return addEvent({ ...state, sessions: [session, ...state.sessions] }, {
+  return addEvent({ ...state, activeSessionId: session.id, sessions: [session, ...state.sessions] }, {
     sessionId: session.id,
     type: 'SESSION_CREATED',
     actor: 'admin',

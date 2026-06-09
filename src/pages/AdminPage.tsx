@@ -49,7 +49,7 @@ function Overview({ state, setState, activeSession, setActiveSessionId }: Props)
   const [title, setTitle] = useState('Захист')
   const [date, setDate] = useState(todayLocalDate())
   const [from, setFrom] = useState('08:00')
-  const [to, setTo] = useState('09:00')
+  const [to, setTo] = useState('23:59')
   const [start, setStart] = useState('09:05')
 
   const students = activeSession ? state.students.filter((s) => s.sessionId === activeSession.id) : []
@@ -72,7 +72,6 @@ function Overview({ state, setState, activeSession, setActiveSessionId }: Props)
           <button className="primary" onClick={() => {
             const next = createSession(state, { title, date, registrationOpenFrom: from, registrationOpenTo: to, defenseStartsAt: start })
             setState(next)
-            setActiveSessionId(next.sessions[0].id)
           }}>Створити</button>
         </div>
         <table>

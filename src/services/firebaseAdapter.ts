@@ -41,6 +41,22 @@ function normalizeState(value: unknown): AppState {
   return { ...emptyState(), ...(value as Partial<AppState>) }
 }
 
+function withoutUndefined<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((item) => withoutUndefined(item)) as T
+  }
+
+  if (value && typeof value === 'object') {
+    const cleaned: Record<string, unknown> = {}
+    for (const [key, item] of Object.entries(value)) {
+      if (item !== undefined) cleaned[key] = withoutUndefined(item)
+    }
+    return cleaned as T
+  }
+
+  return value
+}
+
 export function isFirebaseEnabled(): boolean {
   return runtime !== null
 }
@@ -79,7 +95,7 @@ export class FirebaseRepository implements AppRepository {
   async saveState(state: AppState): Promise<void> {
     if (!runtime) return
     await setDoc(this.stateRef(), {
-      state,
+      state: withoutUndefined(state),
       updatedAt: serverTimestamp()
     }, { merge: true })
   }

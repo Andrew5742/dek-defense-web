@@ -32,7 +32,6 @@ export function sanitizeFilePart(value: string): string {
 
 export function emptyState(): AppState {
   return {
-    activeSessionId: undefined,
     sessions: [],
     groups: [],
     students: [],

@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DEK Defense Station</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <h1>DEK Defense Station</h1>
+        <p>Electron-агент для ПК захисту</p>
+      </div>
+      <button id="openStorageBtn">Відкрити папку презентацій</button>
+    </header>
+
+    <section class="panel">
+      <h2>Стан агента</h2>
+      <table>
+        <tbody>
+          <tr><th>Station ID</th><td id="stationId">—</td></tr>
+          <tr><th>Назва</th><td id="stationName">—</td></tr>
+          <tr><th>Upload URL</th><td id="uploadUrl">—</td></tr>
+          <tr><th>Сховище</th><td id="storageRoot">—</td></tr>
+          <tr><th>IP-адреси</th><td id="addresses">—</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>Останні події</h2>
+      <div id="log" class="log"></div>
+    </section>
+
+    <section class="panel warning">
+      <h2>Важливо</h2>
+      <p>Ця програма має бути запущена на ПК, з якого відкриватимуться презентації. GitHub Pages/Firebase надсилає команди, а цей агент фізично відкриває файли локально.</p>
+      <p>Для PPTX/PPT/ODP потрібен LibreOffice. PDF відкривається одразу.</p>
+    </section>
+  </main>
+  <script src="renderer.js"></script>
+</body>
+</html>

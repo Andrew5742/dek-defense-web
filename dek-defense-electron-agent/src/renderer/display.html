@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Захист</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="display-body">
+  <section class="display-card">
+    <h1>Захист</h1>
+    <p id="dateText" class="display-date">—</p>
+    <div class="display-row">
+      <span>Зараз захищається</span>
+      <strong id="currentText">—</strong>
+    </div>
+    <div class="display-row">
+      <span>Наступний</span>
+      <strong id="nextText">—</strong>
+    </div>
+    <div class="display-row">
+      <span>Очікують</span>
+      <strong id="waitingText">0</strong>
+    </div>
+    <div class="unlock-box">
+      <input id="passwordInput" type="password" placeholder="Пароль виходу" />
+      <button id="exitBtn">Вийти</button>
+    </div>
+  </section>
+  <script>
+    document.getElementById('dateText').textContent = new Date().toISOString().slice(0, 10);
+    document.getElementById('exitBtn').addEventListener('click', async () => {
+      const password = document.getElementById('passwordInput').value;
+      try { await window.dekAgent.closePresentation(password); } catch (e) { alert(e.message); }
+    });
+  </script>
+</body>
+</html>

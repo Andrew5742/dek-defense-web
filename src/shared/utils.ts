@@ -62,10 +62,8 @@ export function formatLocalDateTime(iso?: string): string {
   return new Date(iso).toLocaleString('uk-UA')
 }
 
-export function canRegister(session: { date: string; registrationOpenFrom: string; registrationOpenTo: string; manualRegistrationOpen: boolean; isRegistrationLocked: boolean }, now = new Date()) {
+export function canRegister(session: { date: string; registrationOpenFrom: string; registrationOpenTo: string; manualRegistrationOpen: boolean; isRegistrationLocked: boolean }) {
   if (session.manualRegistrationOpen) return true
   if (session.isRegistrationLocked) return false
-  const from = new Date(`${session.date}T${session.registrationOpenFrom}:00`)
-  const to = new Date(`${session.date}T${session.registrationOpenTo}:00`)
-  return now >= from && now <= to
+  return true
 }

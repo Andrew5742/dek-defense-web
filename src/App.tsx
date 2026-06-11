@@ -27,7 +27,10 @@ function readInitialRole(): { role: DeviceRole; page: Page } {
   const roleFromUrl = params.get('role') || params.get('view')
 
   if (roleFromUrl === 'student' || roleFromUrl === 'agent' || roleFromUrl === 'display' || roleFromUrl === 'defense' || roleFromUrl === 'station') {
-    return { role: 'defense', page: normalizeDefensePage(roleFromUrl) }
+    const page = roleFromUrl === 'display' && params.get('kiosk') !== '1' && params.get('display') !== '1'
+      ? 'student'
+      : normalizeDefensePage(roleFromUrl)
+    return { role: 'defense', page }
   }
 
   const savedRole = localStorage.getItem(ROLE_STORAGE_KEY)
@@ -44,6 +47,7 @@ function writeUrlForRole(role: DeviceRole, page: Page) {
   url.search = ''
   if (role === 'admin') url.searchParams.set('role', 'admin')
   if (role === 'defense') url.searchParams.set('role', page)
+  if (role === 'defense' && page === 'display') url.searchParams.set('display', '1')
   window.history.replaceState(null, '', url.toString())
 }
 
@@ -177,12 +181,15 @@ export default function App() {
   const [deviceRole, setDeviceRole] = useState<DeviceRole>(initialRoute.role)
   const [page, setPageRaw] = useState<Page>(initialRoute.page)
   const [activeSessionId, setActiveSessionId] = useState<string>('')
-  const [displayLocked, setDisplayLocked] = useState(() => localStorage.getItem(DISPLAY_LOCK_KEY) === '1')
+  const [displayLocked, setDisplayLocked] = useState(() => initialRoute.page === 'display' && localStorage.getItem(DISPLAY_LOCK_KEY) === '1')
   const [showLockOverlay, setShowLockOverlay] = useState(false)
   const repository = firebaseRepository || localRepository
 
   useEffect(() => {
     let disposed = false
+    if (initialRoute.page !== 'display') {
+      localStorage.removeItem(DISPLAY_LOCK_KEY)
+    }
 
     let timeoutId = 0
     const loadState = Promise.race([
@@ -240,6 +247,16 @@ export default function App() {
     return () => document.removeEventListener('fullscreenchange', onFullscreenChange)
   }, [displayLocked])
 
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (page === 'display' && event.key === 'Escape') {
+        setShowLockOverlay(true)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [page])
+
   function loginAdmin() {
     localStorage.setItem(ROLE_STORAGE_KEY, 'admin')
     localStorage.setItem(ADMIN_AUTH_KEY, '1')
@@ -269,6 +286,15 @@ export default function App() {
     setShowLockOverlay(false)
     setDeviceRole('unset')
     setPageRaw('admin')
+  }
+
+  function exitDisplayMode() {
+    localStorage.removeItem(DISPLAY_LOCK_KEY)
+    setDisplayLocked(false)
+    setShowLockOverlay(false)
+    setPageRaw('student')
+    writeUrlForRole('defense', 'student')
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => {})
   }
 
   function setPage(nextPage: Page) {
@@ -321,14 +347,10 @@ export default function App() {
       {defensePage === 'student' && <StudentPage state={state} setState={setState} activeSession={activeSession} publicMode />}
       {defensePage === 'agent' && <AgentPage state={state} setState={setState} activeSession={activeSession} />}
       {defensePage === 'display' && <DisplayPage state={state} activeSession={activeSession} locked={displayLocked} />}
+      {defensePage === 'display' && <button className="display-exit-button" onClick={() => setShowLockOverlay(true)}>Вийти</button>}
       {showLockOverlay && <FullscreenLockOverlay
         onReturnFullscreen={() => { setShowLockOverlay(false); requestAppFullscreen() }}
-        onUnlock={() => {
-          localStorage.removeItem(DISPLAY_LOCK_KEY)
-          setDisplayLocked(false)
-          setShowLockOverlay(false)
-          if (document.fullscreenElement) void document.exitFullscreen().catch(() => {})
-        }}
+        onUnlock={exitDisplayMode}
       />}
     </>
   )

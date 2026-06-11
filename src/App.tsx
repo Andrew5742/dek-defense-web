@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import type { AppState, Command } from './shared/types'
+import { useEffect, useMemo, useState } from 'react'
+import type { AppState } from './shared/types'
 import { emptyState } from './shared/utils'
 import { localRepository } from './services/localRepository'
 import { firebaseRepository, isFirebaseEnabled, signInAdmin } from './services/firebaseAdapter'
-import { markCommandDone, openLatestPresentation } from './services/actions'
 import { AdminPage } from './pages/AdminPage'
 import { StudentPage } from './pages/StudentPage'
 import { DisplayPage } from './pages/DisplayPage'
@@ -180,7 +179,6 @@ export default function App() {
   const [activeSessionId, setActiveSessionId] = useState<string>('')
   const [displayLocked, setDisplayLocked] = useState(() => localStorage.getItem(DISPLAY_LOCK_KEY) === '1')
   const [showLockOverlay, setShowLockOverlay] = useState(false)
-  const handlingCommandRef = useRef(false)
   const repository = firebaseRepository || localRepository
 
   useEffect(() => {
@@ -241,45 +239,6 @@ export default function App() {
     document.addEventListener('fullscreenchange', onFullscreenChange)
     return () => document.removeEventListener('fullscreenchange', onFullscreenChange)
   }, [displayLocked])
-
-  useEffect(() => {
-    if (!loaded || deviceRole !== 'defense' || handlingCommandRef.current) return
-    const pending = state.commands.find((c) =>
-      c.status === 'pending' &&
-      c.type !== 'open_zoom' &&
-      (!activeSessionId || c.sessionId === activeSessionId) &&
-      (!c.targetStationId || c.targetStationId === 'station_local_demo')
-    )
-    if (!pending) return
-    handlingCommandRef.current = true
-    void handleDefenseCommand(pending).finally(() => { handlingCommandRef.current = false })
-  }, [state.commands, loaded, deviceRole, activeSessionId])
-
-  async function handleDefenseCommand(command: Command) {
-    if (command.type === 'start_defense_display' || command.type === 'show_display') {
-      localStorage.setItem(DISPLAY_LOCK_KEY, '1')
-      setDisplayLocked(true)
-      setShowLockOverlay(false)
-      setPageRaw('display')
-      writeUrlForRole('defense', 'display')
-      requestAppFullscreen()
-      setState(markCommandDone(state, command.id))
-      return
-    }
-
-    if (command.type === 'open_zoom') {
-      setState(markCommandDone(state, command.id))
-      return
-    }
-
-    if (command.type === 'open_presentation' && command.studentId) {
-      const next = await openLatestPresentation(state, command.studentId)
-      setState(next)
-      return
-    }
-
-    setState(markCommandDone(state, command.id))
-  }
 
   function loginAdmin() {
     localStorage.setItem(ROLE_STORAGE_KEY, 'admin')

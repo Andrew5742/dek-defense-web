@@ -1,7 +1,7 @@
 import { initializeApp, type FirebaseApp } from 'firebase/app'
 import { getAuth, signInWithEmailAndPassword, signOut, type Auth, type User } from 'firebase/auth'
-import { doc, getDoc, getFirestore, onSnapshot, serverTimestamp, setDoc, type Firestore } from 'firebase/firestore'
-import type { AppRepository, AppState } from '../shared/types'
+import { collection, doc, getDoc, getDocs, getFirestore, onSnapshot, serverTimestamp, setDoc, writeBatch, type Firestore } from 'firebase/firestore'
+import type { AppRepository, AppState, Command, PresentationMeta, Station } from '../shared/types'
 import { emptyState } from '../shared/utils'
 
 export interface FirebaseRuntime {
@@ -35,6 +35,9 @@ export function createFirebaseRuntime(): FirebaseRuntime | null {
 const runtime = createFirebaseRuntime()
 const APP_STATE_COLLECTION = 'dek_app'
 const APP_STATE_DOC = 'state'
+const COMMANDS_COLLECTION = 'dek_commands'
+const PRESENTATIONS_COLLECTION = 'dek_presentations'
+const STATIONS_COLLECTION = 'dek_stations'
 
 function normalizeState(value: unknown): AppState {
   if (!value || typeof value !== 'object') return emptyState()
@@ -55,6 +58,81 @@ function withoutUndefined<T>(value: T): T {
   }
 
   return value
+}
+
+function toIso(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (value && typeof value === 'object' && 'toDate' in value && typeof value.toDate === 'function') {
+    return value.toDate().toISOString()
+  }
+  return new Date().toISOString()
+}
+
+function mergeById<T extends { id: string }>(local: T[], remote: T[]): T[] {
+  const map = new Map<string, T>()
+  for (const item of local) map.set(item.id, item)
+  for (const item of remote) map.set(item.id, { ...(map.get(item.id) || {}), ...item })
+  return Array.from(map.values())
+}
+
+function normalizeCommand(id: string, value: Record<string, unknown>): Command | null {
+  if (!value.type || !value.sessionId) return null
+  return {
+    id: String(value.id || id),
+    sessionId: String(value.sessionId),
+    type: value.type as Command['type'],
+    studentId: value.studentId ? String(value.studentId) : undefined,
+    targetStationId: value.targetStationId ? String(value.targetStationId) : undefined,
+    zoomUrl: value.zoomUrl ? String(value.zoomUrl) : undefined,
+    status: (value.status as Command['status']) || 'pending',
+    error: value.error ? String(value.error) : value.errorMessage ? String(value.errorMessage) : undefined,
+    createdAt: toIso(value.createdAt),
+    updatedAt: toIso(value.updatedAt)
+  }
+}
+
+function normalizePresentation(id: string, value: Record<string, unknown>): PresentationMeta | null {
+  if (!value.sessionId || !value.studentId) return null
+  const extension = String(value.extension || value.format || value.fileName || '').split('.').pop()?.toLowerCase() || 'pdf'
+  const status = (value.status as PresentationMeta['status']) || 'uploaded'
+  return {
+    id: String(value.id || id),
+    sessionId: String(value.sessionId),
+    studentId: String(value.studentId),
+    fileName: String(value.fileName || value.originalFileName || value.storedName || id),
+    originalFileName: String(value.originalFileName || value.fileName || value.storedName || id),
+    fileSize: Number(value.fileSize || value.size || 0),
+    mimeType: String(value.mimeType || 'application/octet-stream'),
+    extension,
+    version: Number(value.version || 1),
+    status,
+    uploadedAt: toIso(value.uploadedAt || value.createdAt || value.updatedAt),
+    localOnly: value.localOnly !== false,
+    storageKey: value.storageKey ? String(value.storageKey) : undefined,
+    convertedPdfReady: value.convertedPdfReady === true || status === 'ready' || status === 'converted',
+    error: value.error ? String(value.error) : value.errorMessage ? String(value.errorMessage) : undefined
+  }
+}
+
+function normalizeStation(id: string, value: Record<string, unknown>): Station {
+  return {
+    id: String(value.id || value.stationId || id),
+    name: String(value.name || 'Defense station'),
+    activeSessionId: value.activeSessionId ? String(value.activeSessionId) : undefined,
+    online: value.online === true,
+    localUploadUrl: value.localUploadUrl ? String(value.localUploadUrl) : undefined,
+    currentStudentId: value.currentStudentId ? String(value.currentStudentId) : undefined,
+    lastHeartbeat: toIso(value.lastHeartbeat || value.updatedAt)
+  }
+}
+
+function mergeExternalState(base: AppState, external: Partial<AppState>): AppState {
+  return {
+    ...base,
+    commands: mergeById(base.commands, external.commands || []),
+    presentations: mergeById(base.presentations, external.presentations || []),
+    stations: mergeById(base.stations, external.stations || [])
+  }
 }
 
 export function isFirebaseEnabled(): boolean {
@@ -89,24 +167,108 @@ export class FirebaseRepository implements AppRepository {
       await this.saveState(emptyState())
       return emptyState()
     }
-    return normalizeState(snapshot.data().state)
+    return mergeExternalState(normalizeState(snapshot.data().state), await this.getExternalState())
   }
 
   async saveState(state: AppState): Promise<void> {
     if (!runtime) return
+    const cleanState = withoutUndefined(state)
     await setDoc(this.stateRef(), {
-      state: withoutUndefined(state),
+      state: cleanState,
       updatedAt: serverTimestamp()
     }, { merge: true })
+
+    const batch = writeBatch(runtime.db)
+    let mirroredWrites = 0
+
+    for (const command of state.commands) {
+      batch.set(doc(runtime.db, COMMANDS_COLLECTION, command.id), withoutUndefined({
+        ...command,
+        errorMessage: command.error
+      }), { merge: true })
+      mirroredWrites += 1
+    }
+
+    for (const presentation of state.presentations) {
+      batch.set(doc(runtime.db, PRESENTATIONS_COLLECTION, presentation.id), withoutUndefined(presentation), { merge: true })
+      mirroredWrites += 1
+    }
+
+    if (!mirroredWrites) return
+    await batch.commit().catch((error) => {
+      console.warn('Firestore agent mirror write failed', error)
+    })
+  }
+
+  private async getExternalState(): Promise<Partial<AppState>> {
+    if (!runtime) return {}
+    const safeGetDocs = async (collectionName: string) => {
+      try {
+        return await getDocs(collection(runtime.db, collectionName))
+      } catch (error) {
+        console.warn(`Firestore collection ${collectionName} is not readable yet`, error)
+        return null
+      }
+    }
+    const [commandsSnap, presentationsSnap, stationsSnap] = await Promise.all([
+      safeGetDocs(COMMANDS_COLLECTION),
+      safeGetDocs(PRESENTATIONS_COLLECTION),
+      safeGetDocs(STATIONS_COLLECTION)
+    ])
+
+    return {
+      commands: (commandsSnap?.docs || [])
+        .map((snap) => normalizeCommand(snap.id, snap.data()))
+        .filter(Boolean) as Command[],
+      presentations: (presentationsSnap?.docs || [])
+        .map((snap) => normalizePresentation(snap.id, snap.data()))
+        .filter(Boolean) as PresentationMeta[],
+      stations: (stationsSnap?.docs || []).map((snap) => normalizeStation(snap.id, snap.data()))
+    }
   }
 
   subscribe(callback: (state: AppState) => void): () => void {
     if (!runtime) return () => undefined
-    return onSnapshot(this.stateRef(), (snapshot) => {
-      if (!snapshot.exists()) return
-      callback(normalizeState(snapshot.data().state))
-    })
+
+    let base = emptyState()
+    let commands: Command[] = []
+    let presentations: PresentationMeta[] = []
+    let stations: Station[] = []
+
+    const emit = () => callback(mergeExternalState(base, { commands, presentations, stations }))
+    const unsubs = [
+      onSnapshot(this.stateRef(), (snapshot) => {
+        if (snapshot.exists()) base = normalizeState(snapshot.data().state)
+        emit()
+      }, (error) => console.warn('Firestore state listener failed', error)),
+      onSnapshot(collection(runtime.db, COMMANDS_COLLECTION), (snapshot) => {
+        commands = snapshot.docs
+          .map((snap) => normalizeCommand(snap.id, snap.data()))
+          .filter(Boolean) as Command[]
+        emit()
+      }, (error) => console.warn('Firestore commands listener failed', error)),
+      onSnapshot(collection(runtime.db, PRESENTATIONS_COLLECTION), (snapshot) => {
+        presentations = snapshot.docs
+          .map((snap) => normalizePresentation(snap.id, snap.data()))
+          .filter(Boolean) as PresentationMeta[]
+        emit()
+      }, (error) => console.warn('Firestore presentations listener failed', error)),
+      onSnapshot(collection(runtime.db, STATIONS_COLLECTION), (snapshot) => {
+        stations = snapshot.docs.map((snap) => normalizeStation(snap.id, snap.data()))
+        emit()
+      }, (error) => console.warn('Firestore stations listener failed', error))
+    ]
+
+    return () => unsubs.forEach((unsub) => unsub())
   }
+}
+
+export async function publishFirebaseStatePatch(state: AppState): Promise<void> {
+  if (!runtime) return
+  await setDoc(doc(runtime.db, APP_STATE_COLLECTION, APP_STATE_DOC), {
+      state: withoutUndefined(state),
+      updatedAt: serverTimestamp()
+    }, { merge: true })
 }
 
 export const firebaseRepository = runtime ? new FirebaseRepository() : null

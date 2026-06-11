@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AppState, Command } from './shared/types'
 import { emptyState } from './shared/utils'
 import { localRepository } from './services/localRepository'
+import { firebaseRepository } from './services/firebaseAdapter'
 import { markCommandDone, openLatestPresentation } from './services/actions'
 import { AdminPage } from './pages/AdminPage'
 import { StudentPage } from './pages/StudentPage'
@@ -168,6 +169,7 @@ function FullscreenLockOverlay({ onUnlock, onReturnFullscreen }: { onUnlock: () 
 export default function App() {
   const [state, setStateRaw] = useState<AppState>(emptyState())
   const [loaded, setLoaded] = useState(false)
+  const [syncError, setSyncError] = useState('')
   const [initialRoute] = useState(readInitialRole)
   const [deviceRole, setDeviceRole] = useState<DeviceRole>(initialRoute.role)
   const [page, setPageRaw] = useState<Page>(initialRoute.page)
@@ -175,20 +177,56 @@ export default function App() {
   const [displayLocked, setDisplayLocked] = useState(() => localStorage.getItem(DISPLAY_LOCK_KEY) === '1')
   const [showLockOverlay, setShowLockOverlay] = useState(false)
   const handlingCommandRef = useRef(false)
+  const repository = firebaseRepository || localRepository
 
   useEffect(() => {
-    localRepository.getState().then((s) => {
+    let disposed = false
+
+    let timeoutId = 0
+    const loadState = Promise.race([
+      repository.getState(),
+      new Promise<AppState>((resolve) => {
+        timeoutId = window.setTimeout(() => {
+          setSyncError('Firebase не відповів за 8 секунд, відкрито локальний порожній стан')
+          resolve(emptyState())
+        }, 8000)
+      })
+    ])
+
+    loadState.then((s) => {
+      if (disposed) return
+      window.clearTimeout(timeoutId)
       setStateRaw(s)
       const params = new URLSearchParams(location.search)
       const sessionFromUrl = params.get('session')
-      setActiveSessionId(sessionFromUrl || s.sessions[0]?.id || '')
+      setActiveSessionId(sessionFromUrl || s.activeSessionId || s.sessions[0]?.id || '')
+      setLoaded(true)
+    }).catch((error) => {
+      if (disposed) return
+      window.clearTimeout(timeoutId)
+      setSyncError(error instanceof Error ? error.message : String(error))
       setLoaded(true)
     })
+
+    const unsubscribe = firebaseRepository?.subscribe((next) => {
+      if (disposed) return
+      setStateRaw(next)
+      setActiveSessionId((current) => current || next.activeSessionId || next.sessions[0]?.id || '')
+    })
+
+    return () => {
+      disposed = true
+      window.clearTimeout(timeoutId)
+      unsubscribe?.()
+    }
   }, [])
 
   function setState(next: AppState) {
     setStateRaw(next)
-    void localRepository.saveState(next)
+    setSyncError('')
+    void repository.saveState(next).catch((error) => {
+      setSyncError(error instanceof Error ? error.message : String(error))
+    })
     if (!activeSessionId && next.sessions[0]) setActiveSessionId(next.sessions[0].id)
   }
 
@@ -305,17 +343,19 @@ export default function App() {
     return (
       <>
         <RoleHeader role="admin" page="admin" setPage={setPage} resetRole={resetRole} activeSessionTitle={activeSession?.title} />
+        {syncError && <div className="sync-error">{syncError}. Дані на цьому ПК можуть бути не синхронізовані.</div>}
         <AdminPage state={state} setState={setState} activeSession={activeSession} setActiveSessionId={setActiveSessionId} />
       </>
     )
   }
 
   const defensePage = page === 'admin' ? 'student' : page
-  const hideHeader = displayLocked && defensePage === 'display'
+  const hideHeader = defensePage === 'display'
 
   return (
     <>
       {!hideHeader && <RoleHeader role="defense" page={defensePage} setPage={setPage} resetRole={resetRole} activeSessionTitle={activeSession?.title} />}
+      {syncError && defensePage !== 'display' && <div className="sync-error">{syncError}. Дані на цьому ПК можуть бути не синхронізовані.</div>}
       {defensePage === 'student' && <StudentPage state={state} setState={setState} activeSession={activeSession} publicMode />}
       {defensePage === 'agent' && <AgentPage state={state} setState={setState} activeSession={activeSession} />}
       {defensePage === 'display' && <DisplayPage state={state} activeSession={activeSession} locked={displayLocked} />}

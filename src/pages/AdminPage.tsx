@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { AppState, DefenseSession, ImportReview, ProtocolSnapshot, Student } from '../shared/types'
 import { downloadTextFile, formatLocalDateTime, nowIso, uid } from '../shared/utils'
-import { addManualStudent, confirmImportReview, createSession, removeFromQueue, removeStudent, reorderQueue, requestOpenPresentation, requestOpenZoom, requestShowDisplay, requestStartDefenses, saveImportReview, saveProtocol, setDefenseStatus, setRegistrationLock, updateImportReview, updateStudent } from '../services/actions'
+import { addManualStudent, addToQueue, confirmImportReview, createSession, removeFromQueue, removeStudent, reorderQueue, requestOpenPresentation, requestOpenZoom, requestShowDisplay, requestStartDefenses, saveImportReview, saveProtocol, setDefenseStatus, setRegistrationLock, updateImportReview, updateStudent } from '../services/actions'
 import { importDocx, importFromPastedText } from '../services/importService'
 import { StatusBadge } from '../components/StatusBadge'
 import { StudentEditor } from '../components/StudentEditor'
@@ -46,7 +46,7 @@ export function AdminPage({ state, setState, activeSession, setActiveSessionId }
 }
 
 function Overview({ state, setState, activeSession, setActiveSessionId }: Props) {
-  const [title, setTitle] = useState('Захист ДЕК')
+  const [title, setTitle] = useState('Захист')
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
   const [from, setFrom] = useState('08:00')
   const [to, setTo] = useState('09:00')
@@ -230,7 +230,12 @@ function QueuePanel({ state, setState, session, onEdit }: { state: AppState; set
               <button onClick={() => setState(requestShowDisplay(state, session.id))}>Повернути Display</button>
               <button onClick={() => setState(setDefenseStatus(state, s.id, 'defended'))}>Захистився</button>
               <button onClick={() => setState(setDefenseStatus(state, s.id, 'absent'))}>Відсутній</button>
-              <button onClick={() => setState(setDefenseStatus(state, s.id, 'problem'))}>Проблема</button>
+              <button onClick={() => {
+                const note = prompt('Опишіть проблему захисту')?.trim()
+                if (note === undefined) return
+                const withNote = note ? updateStudent(state, s.id, { notes: [s.notes, note].filter(Boolean).join('\n') }) : state
+                setState(setDefenseStatus(withNote, s.id, 'problem'))
+              }}>Проблема</button>
               <button onClick={() => onEdit(s)}>Ред.</button>
               <button onClick={() => setState(removeFromQueue(state, session.id, s.id))}>Прибрати з черги</button>
               <button className="danger" onClick={() => {
@@ -245,7 +250,7 @@ function QueuePanel({ state, setState, session, onEdit }: { state: AppState; set
     </div>
     <div className="panel">
       <h2>Не в черзі</h2>
-      {notQueued.map((s) => <div className="list-row" key={s.id}><span>{s.fullName} · {s.groupName}</span><div className="actions compact-actions"><button onClick={() => setState(updateStudent(state, s.id, { registrationStatus: 'manually_added' }))}>Додати вручну</button><button className="danger" onClick={() => {
+      {notQueued.map((s) => <div className="list-row" key={s.id}><span>{s.fullName} · {s.groupName}</span><div className="actions compact-actions"><button onClick={() => setState(addToQueue(state, s.id, 'admin'))}>Додати вручну</button><button className="danger" onClick={() => {
         if (confirm(`Видалити студента з системи?\n\n${s.fullName}\n\nБуде прибрано з черги, протоколів і статусів презентації.`)) {
           setState(removeStudent(state, s.id))
         }

@@ -5,16 +5,18 @@ const { convertToPdf } = require('./converter');
 const { getStudentPresentationDir, ensureDir } = require('./paths');
 
 class FirestoreAgent {
-  constructor({ firebase, stationId, stationName, uploadUrl, zoomUrl, sendToRenderer, openPdfFullscreen, openDisplayFullscreen }) {
+  constructor({ firebase, stationId, stationName, uploadUrl, lanUploadUrl, zoomUrl, sendToRenderer, openPdfFullscreen, openDisplayFullscreen, closeDisplayFullscreen }) {
     this.firebase = firebase;
     this.db = firebase.db;
     this.stationId = stationId;
     this.stationName = stationName;
     this.uploadUrl = uploadUrl;
+    this.lanUploadUrl = lanUploadUrl;
     this.zoomUrl = zoomUrl;
     this.sendToRenderer = sendToRenderer;
     this.openPdfFullscreen = openPdfFullscreen;
     this.openDisplayFullscreen = openDisplayFullscreen;
+    this.closeDisplayFullscreen = closeDisplayFullscreen;
     this.unsubscribers = [];
     this.heartbeatTimer = null;
   }
@@ -37,6 +39,7 @@ class FirestoreAgent {
       name: this.stationName,
       role: 'defense_station',
       localUploadUrl: this.uploadUrl,
+      lanUploadUrl: this.lanUploadUrl || null,
       lastHeartbeat: serverTimestamp(),
       updatedAt: serverTimestamp(),
       ...extra
@@ -89,7 +92,7 @@ class FirestoreAgent {
     this.sendToRenderer('command-running', { commandId, command });
 
     try {
-      if (command.type === 'start_defense_display') {
+      if (command.type === 'start_defense_display' || command.type === 'show_display') {
         this.openDisplayFullscreen(command);
         await this.setCommandStatus(commandId, 'done');
         await this.addEvent('DISPLAY_STARTED', { sessionId: command.sessionId });
@@ -97,6 +100,7 @@ class FirestoreAgent {
       }
 
       if (command.type === 'open_zoom') {
+        this.closeDisplayFullscreen?.();
         await shell.openExternal(command.zoomUrl || this.zoomUrl || 'zoommtg://zoom.us/join');
         await this.setCommandStatus(commandId, 'done');
         await this.addEvent('ZOOM_OPENED', { sessionId: command.sessionId, studentId: command.studentId || null });

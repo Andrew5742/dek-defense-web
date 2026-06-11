@@ -211,6 +211,7 @@ export interface ImportReview {
 }
 
 export interface AppState {
+  activeSessionId?: string
   sessions: DefenseSession[]
   groups: Group[]
   students: Student[]

@@ -22,6 +22,7 @@ const STATION_ID = process.env.STATION_ID || store.get('stationId') || `station-
 const STATION_NAME = process.env.STATION_NAME || 'ПК захисту';
 const UPLOAD_PORT = Number(process.env.UPLOAD_PORT || 3050);
 const ZOOM_URL = process.env.ZOOM_URL || '';
+const WEB_APP_URL = process.env.WEB_APP_URL || 'https://andrew5742.github.io/dek-defense-web/';
 
 store.set('stationId', STATION_ID);
 
@@ -68,12 +69,25 @@ function openDisplayFullscreen(command = {}) {
     }
   });
 
-  displayWindow.loadFile(path.join(__dirname, 'renderer', 'display.html'), {
-    query: {
-      sessionId: command.sessionId || '',
-      stationId: STATION_ID
-    }
+  const url = new URL(WEB_APP_URL);
+  url.searchParams.set('role', 'display');
+  url.searchParams.set('kiosk', '1');
+  url.searchParams.set('station', STATION_ID);
+  if (command.sessionId) url.searchParams.set('session', command.sessionId);
+  displayWindow.loadURL(url.toString()).catch(() => {
+    displayWindow.loadFile(path.join(__dirname, 'renderer', 'display.html'), {
+      query: {
+        sessionId: command.sessionId || '',
+        stationId: STATION_ID
+      }
+    });
   });
+}
+
+function closeDisplayFullscreen() {
+  if (displayWindow && !displayWindow.isDestroyed()) {
+    displayWindow.close();
+  }
 }
 
 function openPdfFullscreen(pdfPath, command = {}) {
@@ -115,10 +129,12 @@ async function startAgent() {
     stationId: STATION_ID,
     stationName: STATION_NAME,
     uploadUrl: uploadServer.localUrl,
+    lanUploadUrl: uploadServer.lanUrl,
     zoomUrl: ZOOM_URL,
     sendToRenderer,
     openPdfFullscreen,
-    openDisplayFullscreen
+    openDisplayFullscreen,
+    closeDisplayFullscreen
   });
 
   await agent.start();
@@ -131,6 +147,7 @@ async function startAgent() {
     stationId: STATION_ID,
     stationName: STATION_NAME,
     uploadUrl: uploadServer.localUrl,
+    lanUploadUrl: uploadServer.lanUrl,
     storageRoot: getStorageRoot(),
     addresses: getLocalIPv4Addresses()
   });
@@ -159,6 +176,7 @@ ipcMain.handle('agent:get-status', async () => ({
   stationId: STATION_ID,
   stationName: STATION_NAME,
   uploadUrl: uploadServer?.localUrl || `http://${getPreferredLocalAddress()}:${UPLOAD_PORT}`,
+  lanUploadUrl: uploadServer?.lanUrl || `http://${getPreferredLocalAddress()}:${UPLOAD_PORT}`,
   storageRoot: getStorageRoot(),
   addresses: getLocalIPv4Addresses()
 }));

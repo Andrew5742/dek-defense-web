@@ -1,4 +1,10 @@
-node_modules
-dist
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+**/release/
+**/out/
+_gh_pages_deploy/
 .env.local
+dek-defense-electron-agent/.env
 .DS_Store

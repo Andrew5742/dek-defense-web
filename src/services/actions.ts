@@ -21,11 +21,20 @@ export function addEvent(state: AppState, event: Omit<EventLogItem, 'id' | 'crea
   }
 }
 
+function targetStationId(state: AppState, session?: DefenseSession): string {
+  return session?.stationId || state.stations.find((station) => station.online)?.id || state.stations[0]?.id || 'station_local_demo'
+}
+
+function getOnlineUploadUrl(state: AppState): string | undefined {
+  const station = state.stations.find((item) => item.online && item.localUploadUrl) || state.stations.find((item) => item.localUploadUrl)
+  return station?.localUploadUrl?.replace(/\/+$/, '')
+}
+
 export function createSession(state: AppState, input: Partial<DefenseSession>): AppState {
   const now = nowIso()
   const session: DefenseSession = {
     id: uid('session'),
-    title: input.title || 'Захист ДЕК',
+    title: input.title || '??????',
     date: input.date || new Date().toISOString().slice(0, 10),
     groupNames: input.groupNames || [],
     registrationOpenFrom: input.registrationOpenFrom || '08:00',
@@ -35,11 +44,11 @@ export function createSession(state: AppState, input: Partial<DefenseSession>): 
     manualRegistrationOpen: false,
     isRegistrationLocked: false,
     publicToken: uid('pub'),
-    stationId: input.stationId || 'station_local_demo',
+    stationId: input.stationId || state.stations.find((station) => station.online)?.id || state.stations[0]?.id || 'station_local_demo',
     createdAt: now,
     updatedAt: now
   }
-  return addEvent({ ...state, sessions: [session, ...state.sessions] }, {
+  return addEvent({ ...state, activeSessionId: session.id, sessions: [session, ...state.sessions] }, {
     sessionId: session.id,
     type: 'SESSION_CREATED',
     actor: 'admin',
@@ -237,16 +246,18 @@ export function addToQueue(state: AppState, studentId: string, actor: 'admin' | 
   if (!student) return state
   const existing = state.queue.find((q) => q.studentId === studentId)
   let next = state
+  let queuePosition = existing?.position
   if (!existing) {
     const max = Math.max(0, ...state.queue.filter((q) => q.sessionId === student.sessionId).map((q) => q.position))
     const item: QueueItem = { id: uid('queue'), sessionId: student.sessionId, studentId, position: max + 1, createdAt: nowIso(), updatedAt: nowIso() }
+    queuePosition = item.position
     next = { ...state, queue: [...state.queue, item] }
   }
   next = {
     ...next,
     students: next.students.map((s) =>
       s.id === studentId
-        ? { ...s, registrationStatus: actor === 'student' ? 'registered' : s.registrationStatus === 'not_registered' ? 'manually_added' : s.registrationStatus, registeredAt: s.registeredAt || nowIso(), queuePosition: existing?.position, updatedAt: nowIso() }
+        ? { ...s, registrationStatus: actor === 'student' ? 'registered' : s.registrationStatus === 'not_registered' ? 'manually_added' : s.registrationStatus, registeredAt: s.registeredAt || nowIso(), queuePosition, updatedAt: nowIso() }
         : s
     )
   }
@@ -299,6 +310,56 @@ export async function uploadPresentation(state: AppState, studentId: string, fil
   }
   const previous = state.presentations.filter((p) => p.studentId === studentId)
   const version = previous.length + 1
+  const agentUploadUrl = getOnlineUploadUrl(state)
+  if (agentUploadUrl) {
+    try {
+      const body = new FormData()
+      body.append('presentation', file)
+      body.append('sessionId', student.sessionId)
+      body.append('studentId', studentId)
+      const response = await fetch(`${agentUploadUrl}/upload?sessionId=${encodeURIComponent(student.sessionId)}&studentId=${encodeURIComponent(studentId)}`, {
+        method: 'POST',
+        body
+      })
+      const payload = await response.json().catch(() => ({}))
+      if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `Agent upload failed: ${response.status}`)
+      const uploaded = payload?.presentation || {}
+      const meta: PresentationMeta = {
+        id: `${student.sessionId}_${studentId}`,
+        sessionId: student.sessionId,
+        studentId,
+        fileName: uploaded.storedName || `${sanitizeFilePart(student.fullName)}_v${version}.${ext}`,
+        originalFileName: uploaded.fileName || file.name,
+        fileSize: uploaded.size || file.size,
+        mimeType: file.type || 'application/octet-stream',
+        extension: uploaded.format || ext,
+        version,
+        status: ext === 'pdf' ? 'ready' : 'conversion_required',
+        uploadedAt: uploaded.uploadedAt || nowIso(),
+        localOnly: true,
+        convertedPdfReady: ext === 'pdf'
+      }
+      let next: AppState = {
+        ...state,
+        presentations: [...state.presentations.filter((p) => p.id !== meta.id), meta],
+        students: state.students.map((s) =>
+          s.id === studentId
+            ? { ...s, presentationStatus: meta.status, registrationStatus: 'registered', registeredAt: s.registeredAt || nowIso(), updatedAt: nowIso() }
+            : s
+        )
+      }
+      next = addToQueue(next, studentId, actor)
+      return addEvent(next, {
+        sessionId: student.sessionId,
+        type: 'PRESENTATION_UPLOADED',
+        actor,
+        message: `Завантажено презентацію в Local Defense Agent: ${student.fullName}`,
+        payload: { studentId, fileName: file.name, version, uploadUrl: agentUploadUrl }
+      })
+    } catch (error) {
+      console.warn('Local Defense Agent upload failed; falling back to browser storage', error)
+    }
+  }
   const storageKey = `${student.sessionId}/${studentId}/v${version}_${sanitizeFilePart(file.name)}`
   await saveBlob(storageKey, file)
   const meta: PresentationMeta = {
@@ -345,7 +406,7 @@ export function requestOpenPresentation(state: AppState, sessionId: string, stud
     sessionId,
     type,
     studentId,
-    targetStationId: session?.stationId || 'station_local_demo',
+    targetStationId: targetStationId(state, session),
     zoomUrl: session?.zoomUrl || '',
     status: 'pending',
     createdAt: nowIso(),
@@ -367,7 +428,7 @@ export function requestOpenZoom(state: AppState, sessionId: string, studentId?: 
     sessionId,
     type: 'open_zoom',
     studentId,
-    targetStationId: session?.stationId || 'station_local_demo',
+    targetStationId: targetStationId(state, session),
     zoomUrl: session?.zoomUrl || '',
     status: 'pending',
     createdAt: nowIso(),
@@ -388,7 +449,7 @@ export function requestStartDefenses(state: AppState, sessionId: string): AppSta
     id: uid('cmd'),
     sessionId,
     type: 'start_defense_display',
-    targetStationId: session?.stationId || 'station_local_demo',
+    targetStationId: targetStationId(state, session),
     status: 'pending',
     createdAt: nowIso(),
     updatedAt: nowIso()
@@ -408,7 +469,7 @@ export function requestShowDisplay(state: AppState, sessionId: string): AppState
     id: uid('cmd'),
     sessionId,
     type: 'show_display',
-    targetStationId: session?.stationId || 'station_local_demo',
+    targetStationId: targetStationId(state, session),
     status: 'pending',
     createdAt: nowIso(),
     updatedAt: nowIso()
@@ -540,7 +601,7 @@ export async function openLatestPresentation(state: AppState, studentId: string)
 export function setDefenseStatus(state: AppState, studentId: string, defenseStatus: DefenseStatus): AppState {
   const student = state.students.find((s) => s.id === studentId)
   if (!student) return state
-  return addEvent({
+  let next = addEvent({
     ...state,
     students: state.students.map((s) => s.id === studentId ? { ...s, defenseStatus, updatedAt: nowIso() } : s)
   }, {
@@ -550,6 +611,18 @@ export function setDefenseStatus(state: AppState, studentId: string, defenseStat
     message: `${student.fullName}: ${defenseStatus}`,
     payload: { studentId, defenseStatus }
   })
+  if ((defenseStatus === 'defended' || defenseStatus === 'problem' || defenseStatus === 'absent') && student.defenseFormat === 'online') {
+    const sessionQueue = next.queue.filter((q) => q.sessionId === student.sessionId).sort((a, b) => a.position - b.position)
+    const currentIndex = sessionQueue.findIndex((q) => q.studentId === studentId)
+    const nextStudent = sessionQueue
+      .slice(currentIndex + 1)
+      .map((q) => next.students.find((s) => s.id === q.studentId))
+      .find((s) => s && s.defenseStatus === 'waiting')
+    if (nextStudent && nextStudent.defenseFormat !== 'online') {
+      next = requestShowDisplay(next, student.sessionId)
+    }
+  }
+  return next
 }
 
 export function saveProtocol(state: AppState, protocol: ProtocolSnapshot): AppState {

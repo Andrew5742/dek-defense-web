@@ -13,6 +13,7 @@
 * { box-sizing: border-box; }
 body { margin: 0; }
 button, input, textarea, select { font: inherit; border-radius: 2px; }
+.sync-error { border-bottom: 1px solid #f59e0b; background: #fffbeb; color: #92400e; padding: 10px 20px; font-size: 14px; }
 button { border: 1px solid #9ca3af; background: #fff; padding: 7px 10px; cursor: pointer; }
 button:hover { background: #f9fafb; }
 button.danger { color: var(--red); border-color: #fca5a5; background: #fff; }

@@ -9,6 +9,16 @@ const allowedExt = new Set(['.pdf', '.pptx', '.ppt', '.odp']);
 
 function startUploadServer({ port, onUploaded }) {
   const app = express();
+  app.use((req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    if (req.method === 'OPTIONS') {
+      res.sendStatus(204);
+      return;
+    }
+    next();
+  });
   app.use(express.json());
 
   const storage = multer.diskStorage({
@@ -74,7 +84,8 @@ function startUploadServer({ port, onUploaded }) {
   return {
     app,
     server,
-    localUrl: `http://${address}:${port}`,
+    localUrl: `http://localhost:${port}`,
+    lanUrl: `http://${address}:${port}`,
     close: () => server.close()
   };
 }

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AppState, Command } from './shared/types'
 import { emptyState } from './shared/utils'
 import { localRepository } from './services/localRepository'
-import { firebaseRepository } from './services/firebaseAdapter'
+import { firebaseRepository, isFirebaseEnabled, signInAdmin } from './services/firebaseAdapter'
 import { markCommandDone, openLatestPresentation } from './services/actions'
 import { AdminPage } from './pages/AdminPage'
 import { StudentPage } from './pages/StudentPage'
@@ -15,8 +15,6 @@ type DeviceRole = 'unset' | 'admin' | 'defense'
 const ROLE_STORAGE_KEY = 'dek-defense-device-role'
 const ADMIN_AUTH_KEY = 'dek-defense-admin-auth'
 const DISPLAY_LOCK_KEY = 'dek-defense-display-locked'
-const FAKE_ADMIN_EMAIL = 'admin@dek.local'
-const FAKE_ADMIN_PASSWORD = 'dek2026'
 const DISPLAY_EXIT_PASSWORD = '0987Kiis'
 
 function normalizeDefensePage(value: string | null): Page {
@@ -55,17 +53,24 @@ function requestAppFullscreen() {
 }
 
 function EntryGate({ onAdminLogin, onDefenseMode }: { onAdminLogin: () => void; onDefenseMode: () => void }) {
-  const [email, setEmail] = useState(FAKE_ADMIN_EMAIL)
+  const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
 
-  function submitAdmin() {
-    if (email.trim().toLowerCase() === FAKE_ADMIN_EMAIL && password === FAKE_ADMIN_PASSWORD) {
+  async function submitAdmin() {
+    setBusy(true)
+    try {
+      if (isFirebaseEnabled()) {
+        await signInAdmin(email.trim(), password)
+      }
       setError('')
       onAdminLogin()
-      return
+    } catch (error) {
+      setError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setBusy(false)
     }
-    setError('Невірний тестовий акаунт. Для локального режиму: admin@dek.local / dek2026')
   }
 
   return (
@@ -76,24 +81,24 @@ function EntryGate({ onAdminLogin, onDefenseMode }: { onAdminLogin: () => void; 
             <div className="role-kicker">DEK Defense</div>
             <h1>Вибір ролі цього ПК</h1>
           </div>
-          <div className="entry-env">локальний режим · Firebase буде підключено пізніше</div>
+          <div className="entry-env">GitHub Pages + Firebase</div>
         </div>
 
         <div className="entry-grid">
           <section className="entry-card admin-login-card">
             <h2>Адміністрування</h2>
-            <p>Вхід для секретаря / викладача. Після входу студентський режим на цьому ПК заблокований.</p>
+            <p>Вхід для секретаря через Firebase Auth. Після входу студентський режим на цьому ПК заблокований.</p>
             <label>
               Email
               <input value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" />
             </label>
             <label>
               Пароль
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') submitAdmin() }} autoComplete="current-password" placeholder="dek2026" />
+              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void submitAdmin() }} autoComplete="current-password" />
             </label>
             {error && <div className="form-error">{error}</div>}
-            <button className="primary full-width" onClick={submitAdmin}>Увійти в адмінку</button>
-            <div className="login-hint">Тестовий акаунт до Firebase Auth: <b>{FAKE_ADMIN_EMAIL}</b> / <b>{FAKE_ADMIN_PASSWORD}</b></div>
+            <button className="primary full-width" disabled={busy} onClick={() => void submitAdmin()}>{busy ? 'Вхід...' : 'Увійти в адмінку'}</button>
+            <div className="login-hint">Використайте Firebase Auth акаунт секретаря.</div>
           </section>
 
           <section className="entry-card defense-card">
@@ -101,8 +106,8 @@ function EntryGate({ onAdminLogin, onDefenseMode }: { onAdminLogin: () => void; 
             <p>Режим для аудиторії / ПК доповідача: пошук студента, запис, завантаження презентації, display і станція показу.</p>
             <ul>
               <li>Адмінка на цьому ПК буде заблокована.</li>
-              <li>У Display fullscreen навігаційні кнопки приховуються.</li>
-              <li>Вихід із захисного fullscreen — через пароль {DISPLAY_EXIT_PASSWORD}.</li>
+              <li>Display fullscreen відкривається без навігаційних кнопок.</li>
+              <li>Вихід із захисного fullscreen через пароль {DISPLAY_EXIT_PASSWORD}.</li>
             </ul>
             <button className="secondary strong full-width" onClick={onDefenseMode}>Це ПК для захисту</button>
           </section>
@@ -111,7 +116,6 @@ function EntryGate({ onAdminLogin, onDefenseMode }: { onAdminLogin: () => void; 
     </main>
   )
 }
-
 function RoleHeader({ role, page, setPage, resetRole, activeSessionTitle }: {
   role: DeviceRole
   page: Page
@@ -240,7 +244,11 @@ export default function App() {
 
   useEffect(() => {
     if (!loaded || deviceRole !== 'defense' || handlingCommandRef.current) return
-    const pending = state.commands.find((c) => c.status === 'pending' && (!activeSessionId || c.sessionId === activeSessionId))
+    const pending = state.commands.find((c) =>
+      c.status === 'pending' &&
+      (!activeSessionId || c.sessionId === activeSessionId) &&
+      (!c.targetStationId || c.targetStationId === 'station_local_demo')
+    )
     if (!pending) return
     handlingCommandRef.current = true
     void handleDefenseCommand(pending).finally(() => { handlingCommandRef.current = false })

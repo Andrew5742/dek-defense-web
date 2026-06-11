@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react'
 import type { AppState, DefenseSession, ImportReview, ProtocolSnapshot, Student } from '../shared/types'
 import { downloadTextFile, formatLocalDateTime, nowIso, uid } from '../shared/utils'
-import { addManualStudent, addToQueue, confirmImportReview, createSession, removeFromQueue, removeStudent, reorderQueue, requestOpenPresentation, requestOpenZoom, requestShowDisplay, requestStartDefenses, saveImportReview, saveProtocol, setDefenseStatus, setRegistrationLock, updateImportReview, updateStudent } from '../services/actions'
+import { addManualStudent, addToQueue, confirmImportReview, createSession, removeFromQueue, removeSession, removeStudent, reorderQueue, requestOpenPresentation, requestOpenZoom, requestShowDisplay, requestStartDefenses, saveImportReview, saveProtocol, setDefenseStatus, setRegistrationLock, updateImportReview, updateStudent } from '../services/actions'
 import { importDocx, importFromPastedText } from '../services/importService'
+import { isFirebaseEnabled } from '../services/firebaseAdapter'
 import { StatusBadge } from '../components/StatusBadge'
 import { StudentEditor } from '../components/StudentEditor'
 
@@ -78,10 +79,21 @@ function Overview({ state, setState, activeSession, setActiveSessionId }: Props)
           }}>Створити</button>
         </div>
         <table>
-          <thead><tr><th>Назва</th><th>Дата</th><th>Запис</th><th>Групи</th><th></th></tr></thead>
+          <thead><tr><th>Назва</th><th>Дата</th><th>Запис</th><th>Групи</th><th>Дії</th></tr></thead>
           <tbody>{state.sessions.map((s) => <tr key={s.id} className={activeSession?.id === s.id ? 'selected-row' : ''}>
             <td>{s.title}</td><td>{s.date}</td><td>{s.registrationOpenFrom}–{s.registrationOpenTo}</td><td>{s.groupNames.join(', ') || '—'}</td>
-            <td><button onClick={() => setActiveSessionId(s.id)}>Обрати</button></td>
+            <td className="actions compact-actions">
+              <button onClick={() => {
+                setActiveSessionId(s.id)
+                setState({ ...state, activeSessionId: s.id })
+              }}>Обрати</button>
+              <button className="danger" onClick={() => {
+                if (!confirm(`Видалити сесію захисту?\n\n${s.title} · ${s.date}\n\nРазом із нею буде видалено студентів, чергу, презентації, команди та протоколи цієї сесії.`)) return
+                const next = removeSession(state, s.id)
+                setState(next)
+                setActiveSessionId(next.activeSessionId || next.sessions[0]?.id || '')
+              }}>Видалити</button>
+            </td>
           </tr>)}</tbody>
         </table>
       </div>
@@ -298,14 +310,19 @@ function ProtocolPanel({ state, setState, session }: { state: AppState; setState
 
 function DiagnosticsPanel({ state, activeSession }: { state: AppState; activeSession?: DefenseSession }) {
   const pendingCommands = state.commands.filter((c) => c.status === 'pending').length
-  return <div><h1>Діагностика</h1><div className="panel"><h2>Preflight local/demo</h2>
+  const failedCommands = state.commands.filter((c) => c.status === 'error').length
+  const onlineStations = state.stations.filter((station) => station.online)
+  const activeSessionStudents = activeSession ? state.students.filter((s) => s.sessionId === activeSession.id).length : 0
+  return <div><h1>Діагностика</h1><div className="panel"><h2>Стан системи</h2>
     <ul className="checklist">
-      <li>✅ Web UI запущений локально</li>
-      <li>{activeSession ? '✅' : '⚠️'} Активна сесія</li>
-      <li>{state.students.length ? '✅' : '⚠️'} Імпортовані студенти</li>
-      <li>{pendingCommands ? '⚠️' : '✅'} Команди агента: {pendingCommands} pending</li>
-      <li>⚠️ Firebase ще не підключено</li>
-      <li>⚠️ Реальний Local Defense Agent для файлового диску буде наступним модулем</li>
+      <li>Web UI запущено</li>
+      <li>Firebase config: {isFirebaseEnabled() ? 'підключено' : 'не знайдено env-конфіг'}</li>
+      <li>Активна сесія: {activeSession ? activeSession.title + ' · ' + activeSession.date : 'не обрано'}</li>
+      <li>Студенти активної сесії: {activeSessionStudents}</li>
+      <li>Electron Agent онлайн: {onlineStations.length ? onlineStations.map((s) => s.name || s.id).join(', ') : 'не бачимо станцію'}</li>
+      <li>Команди агента pending: {pendingCommands}</li>
+      <li>Команди з помилкою: {failedCommands}</li>
     </ul>
+    {!onlineStations.length && <p className="hint">Якщо презентації мають відкриватися на ПК захисту, запустіть Electron Agent на цьому ПК і перевірте Firestore rules для dek_stations/dek_commands.</p>}
   </div></div>
 }

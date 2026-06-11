@@ -29,6 +29,7 @@ export type DefenseFormat = 'offline' | 'online'
 
 export type EventType =
   | 'SESSION_CREATED'
+  | 'SESSION_DELETED'
   | 'IMPORT_REVIEW_CREATED'
   | 'IMPORT_CONFIRMED'
   | 'STUDENT_EDITED'

@@ -34,7 +34,7 @@ export function createSession(state: AppState, input: Partial<DefenseSession>): 
   const now = nowIso()
   const session: DefenseSession = {
     id: uid('session'),
-    title: input.title || '??????',
+    title: input.title || 'Захист',
     date: input.date || new Date().toISOString().slice(0, 10),
     groupNames: input.groupNames || [],
     registrationOpenFrom: input.registrationOpenFrom || '08:00',
@@ -55,6 +55,50 @@ export function createSession(state: AppState, input: Partial<DefenseSession>): 
     message: `Створено сесію ${session.title}`,
     payload: { sessionId: session.id }
   })
+}
+
+export function removeSession(state: AppState, sessionId: string): AppState {
+  const session = state.sessions.find((s) => s.id === sessionId)
+  if (!session) return state
+  const remainingSessions = state.sessions.filter((s) => s.id !== sessionId)
+  const nextActiveSessionId = state.activeSessionId === sessionId ? remainingSessions[0]?.id : state.activeSessionId
+  return addEvent({
+    ...state,
+    activeSessionId: nextActiveSessionId,
+    sessions: remainingSessions,
+    groups: state.groups.filter((g) => g.sessionId !== sessionId),
+    students: state.students.filter((s) => s.sessionId !== sessionId),
+    presentations: state.presentations.filter((p) => p.sessionId !== sessionId),
+    queue: state.queue.filter((q) => q.sessionId !== sessionId),
+    commands: state.commands.filter((c) => c.sessionId !== sessionId),
+    protocols: state.protocols.filter((p) => p.sessionId !== sessionId),
+    importReviews: state.importReviews.filter((r) => r.sessionId !== sessionId)
+  }, {
+    sessionId,
+    type: 'SESSION_DELETED',
+    actor: 'admin',
+    message: `Видалено сесію ${session.title}`,
+    payload: { sessionId }
+  })
+}
+
+function requestCommand(state: AppState, command: Command, event: Omit<EventLogItem, 'id' | 'createdAt'>): AppState {
+  const existing = state.commands.find((item) =>
+    item.sessionId === command.sessionId &&
+    item.type === command.type &&
+    item.status !== 'done' &&
+    item.status !== 'error' &&
+    (item.studentId || '') === (command.studentId || '') &&
+    (item.targetStationId || '') === (command.targetStationId || '')
+  )
+  if (existing) {
+    return addEvent(state, {
+      ...event,
+      message: `${event.message} (команда вже очікує виконання)`,
+      payload: { ...(event.payload || {}), commandId: existing.id, reused: true }
+    })
+  }
+  return addEvent({ ...state, commands: [command, ...state.commands] }, event)
 }
 
 export function saveImportReview(state: AppState, review: ImportReview): AppState {
@@ -412,7 +456,7 @@ export function requestOpenPresentation(state: AppState, sessionId: string, stud
     createdAt: nowIso(),
     updatedAt: nowIso()
   }
-  return addEvent({ ...state, commands: [command, ...state.commands] }, {
+  return requestCommand(state, command, {
     sessionId,
     type: type === 'open_zoom' ? 'ZOOM_OPEN_REQUESTED' : 'PRESENTATION_OPEN_REQUESTED',
     actor: 'admin',
@@ -434,7 +478,7 @@ export function requestOpenZoom(state: AppState, sessionId: string, studentId?: 
     createdAt: nowIso(),
     updatedAt: nowIso()
   }
-  return addEvent({ ...state, commands: [command, ...state.commands] }, {
+  return requestCommand(state, command, {
     sessionId,
     type: 'ZOOM_OPEN_REQUESTED',
     actor: 'admin',
@@ -454,7 +498,7 @@ export function requestStartDefenses(state: AppState, sessionId: string): AppSta
     createdAt: nowIso(),
     updatedAt: nowIso()
   }
-  return addEvent({ ...state, commands: [command, ...state.commands] }, {
+  return requestCommand(state, command, {
     sessionId,
     type: 'START_DEFENSES_REQUESTED',
     actor: 'admin',
@@ -474,7 +518,7 @@ export function requestShowDisplay(state: AppState, sessionId: string): AppState
     createdAt: nowIso(),
     updatedAt: nowIso()
   }
-  return addEvent({ ...state, commands: [command, ...state.commands] }, {
+  return requestCommand(state, command, {
     sessionId,
     type: 'DISPLAY_STARTED',
     actor: 'admin',

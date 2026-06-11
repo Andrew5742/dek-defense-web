@@ -127,10 +127,13 @@ function normalizeStation(id: string, value: Record<string, unknown>): Station {
 }
 
 function mergeExternalState(base: AppState, external: Partial<AppState>): AppState {
+  const sessionIds = new Set(base.sessions.map((session) => session.id))
+  const commands = (external.commands || []).filter((command) => sessionIds.has(command.sessionId))
+  const presentations = (external.presentations || []).filter((presentation) => sessionIds.has(presentation.sessionId))
   return {
     ...base,
-    commands: mergeById(base.commands, external.commands || []),
-    presentations: mergeById(base.presentations, external.presentations || []),
+    commands: mergeById(base.commands, commands),
+    presentations: mergeById(base.presentations, presentations),
     stations: mergeById(base.stations, external.stations || [])
   }
 }

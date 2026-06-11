@@ -246,6 +246,7 @@ export default function App() {
     if (!loaded || deviceRole !== 'defense' || handlingCommandRef.current) return
     const pending = state.commands.find((c) =>
       c.status === 'pending' &&
+      c.type !== 'open_zoom' &&
       (!activeSessionId || c.sessionId === activeSessionId) &&
       (!c.targetStationId || c.targetStationId === 'station_local_demo')
     )
@@ -267,12 +268,6 @@ export default function App() {
     }
 
     if (command.type === 'open_zoom') {
-      if (document.fullscreenElement) await document.exitFullscreen().catch(() => {})
-      setDisplayLocked(false)
-      localStorage.removeItem(DISPLAY_LOCK_KEY)
-      const session = state.sessions.find((s) => s.id === command.sessionId)
-      const zoomUrl = command.zoomUrl || session?.zoomUrl || 'zoommtg://zoom.us/join'
-      window.open(zoomUrl, '_blank', 'noopener,noreferrer')
       setState(markCommandDone(state, command.id))
       return
     }

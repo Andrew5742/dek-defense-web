@@ -4,6 +4,45 @@ const { shell } = require('electron');
 const { convertToPdf } = require('./converter');
 const { getStudentPresentationDir, ensureDir } = require('./paths');
 
+const APP_STATE_COLLECTION = 'dek_app';
+const APP_STATE_DOC = 'state';
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function uid(prefix) {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function emptyAppState() {
+  return {
+    activeSessionId: '',
+    sessions: [],
+    groups: [],
+    students: [],
+    presentations: [],
+    queue: [],
+    commands: [],
+    stations: [],
+    protocols: [],
+    events: [],
+    importReviews: []
+  };
+}
+
+function withoutUndefined(value) {
+  if (Array.isArray(value)) return value.map((item) => withoutUndefined(item));
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const [key, item] of Object.entries(value)) {
+      if (item !== undefined) out[key] = withoutUndefined(item);
+    }
+    return out;
+  }
+  return value;
+}
+
 class FirestoreAgent {
   constructor({ firebase, stationId, stationName, uploadUrl, lanUploadUrl, zoomUrl, sendToRenderer, openPdfFullscreen, openPresentationFullscreen, openDisplayFullscreen, closeDisplayFullscreen, closePresentationFullscreen }) {
     this.firebase = firebase;
@@ -158,6 +197,78 @@ class FirestoreAgent {
     }, { merge: true });
   }
 
+  async updateAppStateAfterUpload(payload, processed = {}) {
+    const { doc, getDoc, setDoc, serverTimestamp } = this.firebase;
+    const stateRef = doc(this.db, APP_STATE_COLLECTION, APP_STATE_DOC);
+    const snapshot = await getDoc(stateRef);
+    const base = snapshot.exists() && snapshot.data()?.state
+      ? { ...emptyAppState(), ...snapshot.data().state }
+      : emptyAppState();
+    const now = nowIso();
+    const presentationId = `${payload.sessionId}_${payload.studentId}`;
+    const existingStudent = base.students.find((student) => student.id === payload.studentId);
+    const currentQueue = base.queue.filter((item) => item.sessionId === payload.sessionId);
+    const existingQueueItem = base.queue.find((item) => item.sessionId === payload.sessionId && item.studentId === payload.studentId);
+    const queuePosition = existingQueueItem?.position || Math.max(0, ...currentQueue.map((item) => Number(item.position) || 0)) + 1;
+    const presentationStatus = processed.status || 'ready';
+    const presentation = {
+      id: presentationId,
+      sessionId: payload.sessionId,
+      studentId: payload.studentId,
+      fileName: payload.storedName || payload.fileName,
+      originalFileName: payload.fileName,
+      fileSize: payload.size || 0,
+      mimeType: 'application/octet-stream',
+      extension: payload.format,
+      version: 1,
+      status: presentationStatus,
+      uploadedAt: now,
+      localOnly: true,
+      convertedPdfReady: processed.convertedPdfReady === true || payload.format === 'pdf',
+      error: processed.errorMessage
+    };
+    const next = {
+      ...base,
+      activeSessionId: base.activeSessionId || payload.sessionId,
+      students: base.students.map((student) => student.id === payload.studentId ? {
+        ...student,
+        registrationStatus: 'registered',
+        registeredAt: student.registeredAt || now,
+        presentationStatus,
+        queuePosition,
+        updatedAt: now
+      } : student),
+      presentations: [
+        ...base.presentations.filter((item) => item.id !== presentationId && item.studentId !== payload.studentId),
+        presentation
+      ],
+      queue: existingQueueItem
+        ? base.queue.map((item) => item.id === existingQueueItem.id ? { ...item, position: queuePosition, updatedAt: now } : item)
+        : [...base.queue, {
+          id: uid('queue'),
+          sessionId: payload.sessionId,
+          studentId: payload.studentId,
+          position: queuePosition,
+          createdAt: now,
+          updatedAt: now
+        }],
+      events: [{
+        id: uid('event'),
+        sessionId: payload.sessionId,
+        type: 'PRESENTATION_UPLOADED',
+        actor: 'student',
+        message: `Презентацію завантажено в Electron Agent: ${existingStudent?.fullName || payload.studentId}`,
+        payload: { studentId: payload.studentId, fileName: payload.fileName, stationId: this.stationId },
+        createdAt: now
+      }, ...base.events].slice(0, 1000)
+    };
+
+    await setDoc(stateRef, {
+      state: withoutUndefined(next),
+      updatedAt: serverTimestamp()
+    }, { merge: true });
+  }
+
   async onUploaded(payload) {
     const isPdf = payload.format === 'pdf';
     await this.updatePresentation(payload.sessionId, payload.studentId, {
@@ -180,7 +291,9 @@ class FirestoreAgent {
     });
     this.sendToRenderer('presentation-uploaded', payload);
     if (isPdf) {
-      return { status: 'ready', convertedPdfReady: true };
+      const processed = { status: 'ready', convertedPdfReady: true };
+      await this.updateAppStateAfterUpload(payload, processed);
+      return processed;
     }
 
     if (!isPdf) {
@@ -202,7 +315,9 @@ class FirestoreAgent {
           directOpenFallback: prepared.kind !== 'pdf'
         });
         this.sendToRenderer('presentation-converted', { ...payload, convertedPdfName, directOpenFallback: prepared.kind !== 'pdf' });
-        return { status: 'ready', convertedPdfReady: prepared.kind === 'pdf', convertedPdfName, directOpenFallback: prepared.kind !== 'pdf', errorMessage: prepared.conversionError };
+        const processed = { status: 'ready', convertedPdfReady: prepared.kind === 'pdf', convertedPdfName, directOpenFallback: prepared.kind !== 'pdf', errorMessage: prepared.conversionError };
+        await this.updateAppStateAfterUpload(payload, processed);
+        return processed;
       } catch (error) {
         await this.updatePresentation(payload.sessionId, payload.studentId, {
           status: 'ready',
@@ -217,7 +332,9 @@ class FirestoreAgent {
           errorMessage: error.message
         });
         this.sendToRenderer('agent-error', { error: error.message });
-        return { status: 'ready', convertedPdfReady: false, directOpenFallback: true, errorMessage: error.message };
+        const processed = { status: 'ready', convertedPdfReady: false, directOpenFallback: true, errorMessage: error.message };
+        await this.updateAppStateAfterUpload(payload, processed);
+        return processed;
       }
     }
   }

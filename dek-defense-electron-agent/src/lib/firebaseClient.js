@@ -2,6 +2,7 @@ const { initializeApp } = require('firebase/app');
 const {
   getFirestore,
   doc,
+  getDoc,
   setDoc,
   addDoc,
   collection,
@@ -66,6 +67,7 @@ async function createFirebaseClient() {
     db,
     auth,
     doc,
+    getDoc,
     setDoc,
     addDoc,
     collection,

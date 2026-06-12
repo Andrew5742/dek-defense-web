@@ -108,9 +108,21 @@ function deletedIds(state: AppState, eventType: 'STUDENT_DELETED' | 'SESSION_DEL
   return ids
 }
 
+function removedQueueKeys(state: AppState) {
+  const keys = new Set<string>()
+  for (const event of state.events) {
+    if (event.type !== 'QUEUE_REMOVED') continue
+    const sessionId = event.payload?.sessionId
+    const studentId = event.payload?.studentId
+    if (typeof sessionId === 'string' && typeof studentId === 'string') keys.add(`${sessionId}:${studentId}`)
+  }
+  return keys
+}
+
 function mergeStateForSave(remote: AppState, local: AppState): AppState {
   const deletedStudentIds = deletedIds(local, 'STUDENT_DELETED')
   const deletedSessionIds = deletedIds(local, 'SESSION_DELETED')
+  const removedQueue = removedQueueKeys(local)
   const keepSession = (sessionId?: string) => !sessionId || !deletedSessionIds.has(sessionId)
   const keepStudent = (studentId?: string) => !studentId || !deletedStudentIds.has(studentId)
   const newestActiveSession = newestIso(local.events[0]?.createdAt, remote.events[0]?.createdAt) === local.events[0]?.createdAt
@@ -125,7 +137,7 @@ function mergeStateForSave(remote: AppState, local: AppState): AppState {
     groups: mergePreferNewest(remote.groups, local.groups).filter((item) => keepSession(item.sessionId)),
     students: mergePreferNewest(remote.students, local.students).filter((item) => keepSession(item.sessionId) && !deletedStudentIds.has(item.id)),
     presentations: mergePreferNewest(remote.presentations, local.presentations).filter((item) => keepSession(item.sessionId) && keepStudent(item.studentId)),
-    queue: mergePreferNewest(remote.queue, local.queue).filter((item) => keepSession(item.sessionId) && keepStudent(item.studentId)),
+    queue: mergePreferNewest(remote.queue, local.queue).filter((item) => keepSession(item.sessionId) && keepStudent(item.studentId) && !removedQueue.has(`${item.sessionId}:${item.studentId}`)),
     commands: mergePreferNewest(remote.commands, local.commands).filter((item) => keepSession(item.sessionId) && keepStudent(item.studentId)),
     stations: mergePreferNewest(remote.stations, local.stations),
     protocols: mergePreferNewest(remote.protocols, local.protocols).filter((item) => keepSession(item.sessionId)),

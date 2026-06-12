@@ -379,7 +379,14 @@ export function removeFromQueue(state: AppState, sessionId: string, studentId: s
     .filter((q) => q.sessionId === sessionId && q.studentId !== studentId)
     .sort((a, b) => a.position - b.position)
     .map((q, idx) => ({ ...q, position: idx + 1, updatedAt: nowIso() }))
-  return { ...state, queue: [...queue, ...sessionQueue] }
+  const student = state.students.find((s) => s.id === studentId)
+  return addEvent({ ...state, queue: [...queue, ...sessionQueue] }, {
+    sessionId,
+    type: 'QUEUE_REMOVED',
+    actor: 'admin',
+    message: `Прибрано з черги: ${student?.fullName || studentId}`,
+    payload: { sessionId, studentId }
+  })
 }
 
 export async function uploadPresentation(state: AppState, studentId: string, file: File, actor: 'student' | 'admin' = 'student'): Promise<AppState> {

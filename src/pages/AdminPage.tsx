@@ -292,7 +292,7 @@ function protocolGroupLabel(groupKey: string, students: Student[]): string {
   return students[0]?.groupName || 'Інша група'
 }
 
-function buildProtocol(session: DefenseSession, groupKey: string, groupLabel: string, students: Student[], defaults: Partial<ProtocolRow>, existing?: ProtocolSnapshot): ProtocolSnapshot {
+function buildProtocol(session: DefenseSession, groupKey: string, groupLabel: string, protocolDate: string, students: Student[], defaults: Partial<ProtocolRow>, existing?: ProtocolSnapshot): ProtocolSnapshot {
   const savedRows = new Map((existing?.rows || []).map((row) => [row.studentId, row]))
   const rows = students.map((student, idx) => {
     const saved = savedRows.get(student.id)
@@ -317,8 +317,8 @@ function buildProtocol(session: DefenseSession, groupKey: string, groupLabel: st
   return {
     id: `protocol_${session.id}_${groupKey}`,
     sessionId: session.id,
-    title: `Протокол ${groupLabel} ${session.date}`,
-    date: session.date,
+    title: `Протокол ${groupLabel}${protocolDate ? ` ${protocolDate}` : ''}`,
+    date: protocolDate,
     groupName: groupLabel,
     groupKey,
     rows,
@@ -331,29 +331,45 @@ function buildProtocol(session: DefenseSession, groupKey: string, groupLabel: st
 function ProtocolPanel({ state, setState, session }: { state: AppState; setState: (s: AppState) => void; session: DefenseSession }) {
   const [defaults, setDefaults] = useState<Partial<ProtocolRow>>({ pagesCount: '60', drawingsCount: '3', supervisorReview: 'робота виконана на задовільному рівні', reviewerGrade: 'добре', commissionMembersCount: '5', commissionDecision: 'бакалавра з інформаційних систем та технологій', diplomaType: 'звичайного зразка', questions: '' })
   const [selectedGroupKey, setSelectedGroupKey] = useState('')
+  const [protocolDate, setProtocolDate] = useState('')
   const [drafts, setDrafts] = useState<Record<string, ProtocolSnapshot>>({})
   const studentsById = useMemo(() => new Map(state.students.map((s) => [s.id, s])), [state.students])
-  const groupedStudents = useMemo(() => {
+  const protocolBuckets = useMemo(() => {
     const queueOrder = new Map(state.queue.filter((q) => q.sessionId === session.id).map((q) => [q.studentId, q.position]))
-    const ordered = state.students
-      .filter((s) => s.sessionId === session.id)
+    const defendedStudents = state.students
+      .filter((s) => s.sessionId === session.id && s.defenseStatus === 'defended')
       .sort((a, b) => {
         const aq = queueOrder.get(a.id) ?? 9999
         const bq = queueOrder.get(b.id) ?? 9999
         return aq - bq || a.groupName.localeCompare(b.groupName, 'uk') || a.fullName.localeCompare(b.fullName, 'uk')
       })
-    return ordered.reduce<Record<string, Student[]>>((acc, student) => {
+    const grouped = defendedStudents.reduce<Record<string, Student[]>>((acc, student) => {
       const key = protocolGroupKey(student.groupName)
       acc[key] = [...(acc[key] || []), student]
       return acc
     }, {})
+    return Object.entries(grouped).flatMap(([baseKey, students]) => {
+      const baseLabel = protocolGroupLabel(baseKey, students)
+      const chunks: Array<{ key: string; label: string; students: Student[] }> = []
+      for (let index = 0; index < students.length; index += 12) {
+        const chunkIndex = Math.floor(index / 12) + 1
+        chunks.push({
+          key: `${baseKey}_${chunkIndex}`,
+          label: students.length > 12 ? `${baseLabel}, протокол ${chunkIndex}` : baseLabel,
+          students: students.slice(index, index + 12)
+        })
+      }
+      return chunks
+    })
   }, [state.students, state.queue, session.id])
-  const groupKeys = Object.keys(groupedStudents)
+  const groupKeys = protocolBuckets.map((bucket) => bucket.key)
   const currentGroupKey = groupKeys.includes(selectedGroupKey) ? selectedGroupKey : groupKeys[0] || 'other'
-  const currentStudents = groupedStudents[currentGroupKey] || []
-  const groupLabel = protocolGroupLabel(currentGroupKey, currentStudents)
+  const currentBucket = protocolBuckets.find((bucket) => bucket.key === currentGroupKey)
+  const currentStudents = currentBucket?.students || []
+  const groupLabel = currentBucket?.label || 'Протокол'
   const savedProtocol = state.protocols.find((p) => p.sessionId === session.id && (p.groupKey === currentGroupKey || (!p.groupKey && p.groupName === groupLabel)))
-  const protocol = useMemo(() => buildProtocol(session, currentGroupKey, groupLabel, currentStudents, defaults, drafts[currentGroupKey] || savedProtocol), [session, currentGroupKey, groupLabel, currentStudents, defaults, drafts, savedProtocol])
+  const effectiveProtocolDate = protocolDate || savedProtocol?.date || ''
+  const protocol = useMemo(() => buildProtocol(session, currentGroupKey, groupLabel, effectiveProtocolDate, currentStudents, defaults, drafts[currentGroupKey] || savedProtocol), [session, currentGroupKey, groupLabel, effectiveProtocolDate, currentStudents, defaults, drafts, savedProtocol])
 
   function updateDraft(next: ProtocolSnapshot) {
     setDrafts((prev) => ({ ...prev, [currentGroupKey]: { ...next, updatedAt: nowIso() } }))
@@ -387,12 +403,14 @@ function ProtocolPanel({ state, setState, session }: { state: AppState; setState
     <div className="panel">
       <h2>Окремі протоколи за групами</h2>
       <div className="toolbar">
-        {groupKeys.map((key) => <button key={key} className={key === currentGroupKey ? 'active' : ''} onClick={() => setSelectedGroupKey(key)}>{protocolGroupLabel(key, groupedStudents[key])} ({groupedStudents[key].length})</button>)}
+        {protocolBuckets.map((bucket) => <button key={bucket.key} className={bucket.key === currentGroupKey ? 'active' : ''} onClick={() => setSelectedGroupKey(bucket.key)}>{bucket.label} ({bucket.students.length})</button>)}
       </div>
-      <p className="hint">ІСТ та ІСТс формуються в один протокол. КІ і КІс формуються окремо. Студенти не зникають із протоколу після прибирання з черги.</p>
+      <p className="hint">Протокол заповнюється тільки студентами зі статусом “Захистився”. Один протокол містить максимум 12 осіб. ІСТ та ІСТс формуються разом, КІ і КІс окремо.</p>
+      {!protocolBuckets.length && <p className="hint">Поки немає підтверджених захистів. Натисніть “Захистився” у черзі, і студент зʼявиться тут.</p>}
     </div>
     <div className="panel">
       <h2>Значення за замовчуванням</h2>
+      <label className="single-field">Дата протоколу<input value={effectiveProtocolDate} onChange={(e) => setProtocolDate(e.target.value)} placeholder="Заповните вручну пізніше" /></label>
       <div className="form-grid">
         {Object.entries(defaults).map(([k, v]) => <label key={k}>{k}<input value={String(v || '')} onChange={(e) => setDefaults({ ...defaults, [k]: e.target.value })} /></label>)}
       </div>
@@ -428,7 +446,7 @@ function ProtocolPanel({ state, setState, session }: { state: AppState; setState
     </div>
     <div className="panel protocol" id="protocol-preview">
       <h3 className="center">ПРОТОКОЛ № ___ від “___” __________ 20__ р.</h3>
-      <p className="center">по розгляду дипломних проєктів / робіт. Дата: {session.date}. Група: {groupLabel}</p>
+      <p className="center">по розгляду дипломних проєктів / робіт. Дата: {effectiveProtocolDate || '________________'}. Група: {groupLabel}</p>
       <table><thead><tr><th>№</th><th>ПІБ студента</th><th>Група</th><th>Тема дипломного проєкту / роботи</th><th>Керівник</th><th>Стор.</th><th>Арк.</th><th>Відгук</th><th>Оц. рец.</th><th>К-ть членів</th><th>Питання</th><th>Рішення</th><th>Диплом</th></tr></thead>
       <tbody>{protocol.rows.map((row, idx) => <tr key={row.studentId}><td>{row.order || idx + 1}</td><td>{row.studentName}</td><td>{row.groupName}</td><td>{row.thesisTitle}</td><td>{row.supervisor}</td><td>{row.pagesCount}</td><td>{row.drawingsCount}</td><td>{row.supervisorReview}</td><td>{row.reviewerGrade}</td><td>{row.commissionMembersCount}</td><td>{row.questions}</td><td>{row.commissionDecision}</td><td>{row.diplomaType}</td></tr>)}</tbody></table>
     </div>

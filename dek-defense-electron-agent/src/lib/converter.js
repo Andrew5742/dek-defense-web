@@ -43,6 +43,15 @@ async function convertToPdf(inputPath, outputDir) {
     }
   }
 
+  if (process.platform === 'win32' && ['.pptx', '.ppt', '.odp'].includes(ext)) {
+    try {
+      const output = await runPowerPointExport(inputPath, outputDir);
+      if (fs.existsSync(output)) return output;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
   throw new Error(lastError?.message || 'LibreOffice не знайдено або конвертація не вдалася');
 }
 
@@ -69,6 +78,54 @@ function runLibreOffice(soffice, inputPath, outputDir) {
       }
       const parsed = path.parse(inputPath);
       resolve(path.join(outputDir, `${parsed.name}.pdf`));
+    });
+  });
+}
+
+function psQuote(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function runPowerPointExport(inputPath, outputDir) {
+  return new Promise((resolve, reject) => {
+    const parsed = path.parse(inputPath);
+    const output = path.join(outputDir, `${parsed.name}.pdf`);
+    const script = `
+$ErrorActionPreference = 'Stop'
+$inputPath = ${psQuote(inputPath)}
+$outputDir = ${psQuote(outputDir)}
+$outputPath = ${psQuote(output)}
+New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
+$powerPoint = $null
+$presentation = $null
+try {
+  $powerPoint = New-Object -ComObject PowerPoint.Application
+  $powerPoint.Visible = -1
+  $presentation = $powerPoint.Presentations.Open($inputPath, -1, 0, 0)
+  $presentation.SaveAs($outputPath, 32)
+  Write-Output $outputPath
+} finally {
+  if ($presentation -ne $null) { $presentation.Close() | Out-Null }
+  if ($powerPoint -ne $null) { $powerPoint.Quit() | Out-Null }
+}
+`;
+    const child = spawn('powershell.exe', [
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-Command',
+      script
+    ], { windowsHide: true });
+
+    let stderr = '';
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(stderr || `PowerPoint export exited with code ${code}`));
+        return;
+      }
+      resolve(output);
     });
   });
 }

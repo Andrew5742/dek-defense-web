@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const path = require('path');
 const { app, BrowserWindow, ipcMain, shell, powerSaveBlocker } = require('electron');
+const { spawn } = require('child_process');
 const Store = require('electron-store');
 const { createFirebaseClient } = require('./lib/firebaseClient');
 const { startUploadServer } = require('./lib/uploadServer');
@@ -52,8 +53,11 @@ async function createMainWindow() {
 
 function openDisplayFullscreen(command = {}) {
   if (displayWindow && !displayWindow.isDestroyed()) {
-    displayWindow.focus();
+    displayWindow.show();
+    displayWindow.setAlwaysOnTop(true, 'screen-saver');
     displayWindow.setFullScreen(true);
+    displayWindow.moveTop();
+    displayWindow.focus();
     return;
   }
 
@@ -62,11 +66,18 @@ function openDisplayFullscreen(command = {}) {
     autoHideMenuBar: true,
     frame: false,
     backgroundColor: '#111827',
+    alwaysOnTop: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false
     }
+  });
+  displayWindow.setAlwaysOnTop(true, 'screen-saver');
+  displayWindow.once('ready-to-show', () => {
+    displayWindow.setFullScreen(true);
+    displayWindow.moveTop();
+    displayWindow.focus();
   });
 
   const url = new URL(WEB_APP_URL);
@@ -90,6 +101,35 @@ function closeDisplayFullscreen() {
   }
 }
 
+function closePowerPointSlideShows() {
+  if (process.platform !== 'win32') return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const script = `
+$ErrorActionPreference = 'SilentlyContinue'
+$powerPoint = [Runtime.InteropServices.Marshal]::GetActiveObject('PowerPoint.Application')
+if ($powerPoint -ne $null) {
+  foreach ($show in @($powerPoint.SlideShowWindows)) {
+    try { $show.View.Exit() | Out-Null } catch {}
+  }
+}
+`;
+    const child = spawn('powershell.exe', [
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-Command',
+      script
+    ], { windowsHide: true });
+    child.on('close', () => resolve(true));
+    child.on('error', () => resolve(false));
+  });
+}
+
+async function closePresentationFullscreen() {
+  if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
+  await closePowerPointSlideShows();
+}
+
 function openPdfFullscreen(pdfPath, command = {}) {
   if (presentationWindow && !presentationWindow.isDestroyed()) {
     presentationWindow.close();
@@ -100,11 +140,18 @@ function openPdfFullscreen(pdfPath, command = {}) {
     autoHideMenuBar: true,
     frame: false,
     backgroundColor: '#000000',
+    alwaysOnTop: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false
     }
+  });
+  presentationWindow.setAlwaysOnTop(true, 'screen-saver');
+  presentationWindow.once('ready-to-show', () => {
+    presentationWindow.setFullScreen(true);
+    presentationWindow.moveTop();
+    presentationWindow.focus();
   });
 
   presentationWindow.loadFile(path.join(__dirname, 'renderer', 'pdf-viewer.html'), {
@@ -114,6 +161,54 @@ function openPdfFullscreen(pdfPath, command = {}) {
       sessionId: command.sessionId || ''
     }
   });
+}
+
+function psQuote(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function openPowerPointFullscreen(filePath) {
+  return new Promise((resolve, reject) => {
+    const script = `
+$ErrorActionPreference = 'Stop'
+$filePath = ${psQuote(filePath)}
+$powerPoint = New-Object -ComObject PowerPoint.Application
+$powerPoint.Visible = -1
+$presentation = $powerPoint.Presentations.Open($filePath, -1, 0, -1)
+try { $presentation.SlideShowSettings.ShowPresenterView = 0 } catch {}
+$presentation.SlideShowSettings.ShowType = 1
+$presentation.SlideShowSettings.Run() | Out-Null
+`;
+    const child = spawn('powershell.exe', [
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-Command',
+      script
+    ], { windowsHide: true });
+
+    let stderr = '';
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+    child.on('error', reject);
+    child.on('close', async (code) => {
+      if (code === 0) {
+        resolve(true);
+        return;
+      }
+      const fallback = await shell.openPath(filePath);
+      if (fallback) reject(new Error(stderr || fallback));
+      else resolve(false);
+    });
+  });
+}
+
+async function openPresentationFullscreen(prepared, command = {}) {
+  closeDisplayFullscreen();
+  if (prepared.kind === 'pdf') {
+    openPdfFullscreen(prepared.path, command);
+    return;
+  }
+  await openPowerPointFullscreen(prepared.path);
 }
 
 async function startAgent() {
@@ -133,8 +228,10 @@ async function startAgent() {
     zoomUrl: ZOOM_URL,
     sendToRenderer,
     openPdfFullscreen,
+    openPresentationFullscreen,
     openDisplayFullscreen,
-    closeDisplayFullscreen
+    closeDisplayFullscreen,
+    closePresentationFullscreen
   });
 
   await agent.start();
@@ -191,7 +288,7 @@ ipcMain.handle('agent:open-zoom', async (_, zoomUrl) => {
 
 ipcMain.handle('agent:close-presentation', async (_, password) => {
   if (password !== '0987Kiis') throw new Error('Неправильний пароль');
-  if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
+  await closePresentationFullscreen();
   if (displayWindow && !displayWindow.isDestroyed()) displayWindow.close();
   return true;
 });

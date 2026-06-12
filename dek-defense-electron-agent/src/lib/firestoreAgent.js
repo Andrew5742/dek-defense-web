@@ -5,7 +5,7 @@ const { convertToPdf } = require('./converter');
 const { getStudentPresentationDir, ensureDir } = require('./paths');
 
 class FirestoreAgent {
-  constructor({ firebase, stationId, stationName, uploadUrl, lanUploadUrl, zoomUrl, sendToRenderer, openPdfFullscreen, openDisplayFullscreen, closeDisplayFullscreen }) {
+  constructor({ firebase, stationId, stationName, uploadUrl, lanUploadUrl, zoomUrl, sendToRenderer, openPdfFullscreen, openPresentationFullscreen, openDisplayFullscreen, closeDisplayFullscreen, closePresentationFullscreen }) {
     this.firebase = firebase;
     this.db = firebase.db;
     this.stationId = stationId;
@@ -15,8 +15,10 @@ class FirestoreAgent {
     this.zoomUrl = zoomUrl;
     this.sendToRenderer = sendToRenderer;
     this.openPdfFullscreen = openPdfFullscreen;
+    this.openPresentationFullscreen = openPresentationFullscreen;
     this.openDisplayFullscreen = openDisplayFullscreen;
     this.closeDisplayFullscreen = closeDisplayFullscreen;
+    this.closePresentationFullscreen = closePresentationFullscreen;
     this.unsubscribers = [];
     this.heartbeatTimer = null;
   }
@@ -99,6 +101,7 @@ class FirestoreAgent {
 
     try {
       if (command.type === 'start_defense_display' || command.type === 'show_display') {
+        await this.closePresentationFullscreen?.();
         this.openDisplayFullscreen(command);
         await this.setCommandStatus(commandId, 'done');
         await this.addEvent('DISPLAY_STARTED', { sessionId: command.sessionId });
@@ -114,8 +117,8 @@ class FirestoreAgent {
       }
 
       if (command.type === 'open_presentation') {
-        const pdfPath = await this.preparePresentation(command.sessionId, command.studentId);
-        this.openPdfFullscreen(pdfPath, command);
+        const prepared = await this.preparePresentation(command.sessionId, command.studentId);
+        await this.openPresentationFullscreen(prepared, command);
         await this.updatePresentation(command.sessionId, command.studentId, {
           status: 'presenting',
           lastOpenedAt: this.firebase.serverTimestamp()
@@ -182,25 +185,29 @@ class FirestoreAgent {
 
     if (!isPdf) {
       try {
-        const pdfPath = await this.preparePresentation(payload.sessionId, payload.studentId);
+        const prepared = await this.preparePresentation(payload.sessionId, payload.studentId);
+        const convertedPdfName = prepared.kind === 'pdf' ? path.basename(prepared.path) : null;
         await this.updatePresentation(payload.sessionId, payload.studentId, {
           status: 'ready',
-          convertedPdfReady: true,
-          convertedPdfName: path.basename(pdfPath),
+          convertedPdfReady: prepared.kind === 'pdf',
+          directOpenFallback: prepared.kind !== 'pdf',
+          convertedPdfName,
           convertedAt: this.firebase.serverTimestamp()
         });
         await this.addEvent('PRESENTATION_CONVERTED_LOCAL', {
           sessionId: payload.sessionId,
           studentId: payload.studentId,
           fileName: payload.fileName,
-          convertedPdfName: path.basename(pdfPath)
+          convertedPdfName,
+          directOpenFallback: prepared.kind !== 'pdf'
         });
-        this.sendToRenderer('presentation-converted', { ...payload, convertedPdfName: path.basename(pdfPath) });
-        return { status: 'ready', convertedPdfReady: true, convertedPdfName: path.basename(pdfPath) };
+        this.sendToRenderer('presentation-converted', { ...payload, convertedPdfName, directOpenFallback: prepared.kind !== 'pdf' });
+        return { status: 'ready', convertedPdfReady: prepared.kind === 'pdf', convertedPdfName, directOpenFallback: prepared.kind !== 'pdf', errorMessage: prepared.conversionError };
       } catch (error) {
         await this.updatePresentation(payload.sessionId, payload.studentId, {
-          status: 'error',
+          status: 'ready',
           convertedPdfReady: false,
+          directOpenFallback: true,
           errorMessage: error.message
         });
         await this.addEvent('PRESENTATION_CONVERSION_ERROR', {
@@ -210,7 +217,7 @@ class FirestoreAgent {
           errorMessage: error.message
         });
         this.sendToRenderer('agent-error', { error: error.message });
-        return { status: 'error', convertedPdfReady: false, errorMessage: error.message };
+        return { status: 'ready', convertedPdfReady: false, directOpenFallback: true, errorMessage: error.message };
       }
     }
   }
@@ -233,19 +240,30 @@ class FirestoreAgent {
         convertedPdfReady: true,
         convertedPdfName: source.name
       });
-      return source.full;
+      return { kind: 'pdf', path: source.full, sourcePath: source.full, extension: '.pdf' };
     }
 
     const convertedDir = ensureDir(path.join(dir, 'converted'));
     await this.updatePresentation(sessionId, studentId, { status: 'converting', convertedPdfReady: false });
-    const pdfPath = await convertToPdf(source.full, convertedDir);
-    await this.updatePresentation(sessionId, studentId, {
-      status: 'ready',
-      convertedPdfName: path.basename(pdfPath),
-      convertedPdfReady: true,
-      convertedAt: this.firebase.serverTimestamp()
-    });
-    return pdfPath;
+    try {
+      const pdfPath = await convertToPdf(source.full, convertedDir);
+      await this.updatePresentation(sessionId, studentId, {
+        status: 'ready',
+        convertedPdfName: path.basename(pdfPath),
+        convertedPdfReady: true,
+        directOpenFallback: false,
+        convertedAt: this.firebase.serverTimestamp()
+      });
+      return { kind: 'pdf', path: pdfPath, sourcePath: source.full, extension: ext };
+    } catch (error) {
+      await this.updatePresentation(sessionId, studentId, {
+        status: 'ready',
+        convertedPdfReady: false,
+        directOpenFallback: true,
+        errorMessage: error.message
+      });
+      return { kind: 'source', path: source.full, sourcePath: source.full, extension: ext, conversionError: error.message };
+    }
   }
 }
 

@@ -7,6 +7,13 @@ const { getPreferredLocalAddress } = require('./network');
 
 const allowedExt = new Set(['.pdf', '.pptx', '.ppt', '.odp']);
 
+function normalizeUploadFileName(fileName) {
+  const value = String(fileName || 'presentation');
+  const decoded = Buffer.from(value, 'latin1').toString('utf8');
+  if (/[ÐÑÃ]/.test(value) && /[А-Яа-яІіЇїЄєҐґ]/.test(decoded)) return decoded;
+  return value;
+}
+
 function startUploadServer({ port, onUploaded }) {
   const app = express();
   app.use((req, res, next) => {
@@ -28,8 +35,10 @@ function startUploadServer({ port, onUploaded }) {
       cb(null, getStudentPresentationDir(sessionId, studentId));
     },
     filename(req, file, cb) {
-      const ext = path.extname(file.originalname).toLowerCase();
-      const base = path.basename(file.originalname, ext);
+      const originalName = normalizeUploadFileName(file.originalname);
+      file.originalname = originalName;
+      const ext = path.extname(originalName).toLowerCase();
+      const base = path.basename(originalName, ext);
       const stamp = new Date().toISOString().replace(/[:.]/g, '-');
       cb(null, `${stamp}_${safeName(base)}${ext}`);
     }
@@ -39,7 +48,9 @@ function startUploadServer({ port, onUploaded }) {
     storage,
     limits: { fileSize: 250 * 1024 * 1024 },
     fileFilter(req, file, cb) {
-      const ext = path.extname(file.originalname).toLowerCase();
+      const originalName = normalizeUploadFileName(file.originalname);
+      file.originalname = originalName;
+      const ext = path.extname(originalName).toLowerCase();
       if (!allowedExt.has(ext)) {
         cb(new Error('Дозволені тільки PDF, PPTX, PPT, ODP'));
         return;

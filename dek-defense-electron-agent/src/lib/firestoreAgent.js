@@ -234,7 +234,8 @@ class FirestoreAgent {
     const source = files.find((item) => ['.pptx', '.ppt', '.odp', '.pdf'].includes(path.extname(item.name).toLowerCase()));
     if (!source) throw new Error('Не знайдено підтримуваний файл презентації');
 
-    if (path.extname(source.name).toLowerCase() === '.pdf') {
+    const ext = path.extname(source.name).toLowerCase();
+    if (ext === '.pdf') {
       await this.updatePresentation(sessionId, studentId, {
         status: 'ready',
         convertedPdfReady: true,

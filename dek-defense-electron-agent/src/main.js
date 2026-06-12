@@ -1,6 +1,7 @@
 require('dotenv').config();
 
 const path = require('path');
+const fs = require('fs');
 const { app, BrowserWindow, ipcMain, shell, powerSaveBlocker } = require('electron');
 const { spawn } = require('child_process');
 const Store = require('electron-store');
@@ -167,6 +168,56 @@ function psQuote(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
 }
 
+function getPowerPointCandidates() {
+  if (process.platform !== 'win32') return ['powerpnt'];
+  return [
+    process.env.POWERPOINT_PATH,
+    'powerpnt.exe',
+    'C:\\Program Files\\Microsoft Office\\root\\Office16\\POWERPNT.EXE',
+    'C:\\Program Files (x86)\\Microsoft Office\\root\\Office16\\POWERPNT.EXE',
+    'C:\\Program Files\\Microsoft Office\\Office16\\POWERPNT.EXE',
+    'C:\\Program Files (x86)\\Microsoft Office\\Office16\\POWERPNT.EXE',
+    'C:\\Program Files\\Microsoft Office\\Office15\\POWERPNT.EXE',
+    'C:\\Program Files (x86)\\Microsoft Office\\Office15\\POWERPNT.EXE'
+  ].filter(Boolean);
+}
+
+function commandExists(command) {
+  if (command.includes('/') || command.includes('\\')) return fs.existsSync(command);
+  return true;
+}
+
+function openPowerPointProcessFallback(filePath) {
+  return new Promise((resolve, reject) => {
+    const candidates = getPowerPointCandidates().filter(commandExists);
+    let lastError = null;
+
+    function tryNext(index) {
+      const command = candidates[index];
+      if (!command) {
+        reject(lastError || new Error('PowerPoint executable not found'));
+        return;
+      }
+
+      const child = spawn(command, ['/S', filePath], {
+        windowsHide: false,
+        detached: true,
+        stdio: 'ignore'
+      });
+      child.on('error', (error) => {
+        lastError = error;
+        tryNext(index + 1);
+      });
+      child.on('spawn', () => {
+        child.unref();
+        resolve(true);
+      });
+    }
+
+    tryNext(0);
+  });
+}
+
 function openPowerPointFullscreen(filePath) {
   return new Promise((resolve, reject) => {
     const script = `
@@ -195,9 +246,15 @@ $presentation.SlideShowSettings.Run() | Out-Null
         resolve(true);
         return;
       }
-      const fallback = await shell.openPath(filePath);
-      if (fallback) reject(new Error(stderr || fallback));
-      else resolve(false);
+      try {
+        await openPowerPointProcessFallback(filePath);
+        resolve(true);
+        return;
+      } catch (fallbackError) {
+        const fallback = await shell.openPath(filePath);
+        if (fallback) reject(new Error(stderr || fallbackError.message || fallback));
+        else resolve(false);
+      }
     });
   });
 }

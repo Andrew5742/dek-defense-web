@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { AppState, DefenseSession, ImportReview, ProtocolRow, ProtocolSnapshot, Student } from '../shared/types'
 import { downloadTextFile, formatLocalDateTime, nowIso } from '../shared/utils'
-import { addManualStudent, addToQueue, confirmImportReview, createSession, removeFromQueue, removeSession, removeStudent, reorderQueue, requestOpenPresentation, requestOpenZoom, requestShowDisplay, requestStartDefenses, saveImportReview, saveProtocol, setDefenseStatus, setRegistrationLock, updateImportReview, updateSession, updateStudent } from '../services/actions'
+import { addManualStudent, addToQueue, confirmImportReview, createSession, removeFromQueue, removeSession, removeStudent, reorderQueue, requestOpenPresentation, requestOpenUploadPage, requestOpenZoom, requestShowDisplay, requestStartDefenses, saveImportReview, saveProtocol, setDefenseStatus, setRegistrationLock, updateImportReview, updateSession, updateStudent } from '../services/actions'
 import { importDocx, importFromPastedText } from '../services/importService'
 import { isFirebaseEnabled } from '../services/firebaseAdapter'
 import { StatusBadge } from '../components/StatusBadge'
@@ -337,6 +337,7 @@ function QueuePanel({ state, setState, session, onEdit }: { state: AppState; set
               <button onClick={() => setState(reorderQueue(state, session.id, s.id, -1))}>↑</button>
               <button onClick={() => setState(reorderQueue(state, session.id, s.id, 1))}>↓</button>
               <button onClick={() => setState(requestOpenPresentation(state, session.id, s.id))}>{(s.defenseFormat || 'offline') === 'online' ? 'Відкрити Zoom' : 'Відкрити презу'}</button>
+              <button onClick={() => setState(requestOpenUploadPage(state, session.id, s.id))}>Завантажити презу</button>
               <button onClick={() => setState(requestShowDisplay(state, session.id))}>Повернути Display</button>
               <button onClick={() => setState(setDefenseStatus(state, s.id, 'defended'))}>Захистився</button>
               <button onClick={() => setState(removeFromQueue(setDefenseStatus(state, s.id, 'defended'), session.id, s.id))}>Захистився + прибрати</button>

@@ -164,6 +164,7 @@ function normalizeCommand(id: string, value: Record<string, unknown>): Command |
     sessionId: String(value.sessionId),
     type: value.type as Command['type'],
     studentId: value.studentId ? String(value.studentId) : undefined,
+    studentName: value.studentName ? String(value.studentName) : undefined,
     targetStationId: value.targetStationId ? String(value.targetStationId) : undefined,
     zoomUrl: value.zoomUrl ? String(value.zoomUrl) : undefined,
     status: (value.status as Command['status']) || 'pending',

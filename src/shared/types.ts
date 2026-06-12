@@ -42,6 +42,7 @@ export type EventType =
   | 'REGISTRATION_LOCK_CHANGED'
   | 'PRESENTATION_OPEN_REQUESTED'
   | 'PRESENTATION_OPENED'
+  | 'UPLOAD_PAGE_OPEN_REQUESTED'
   | 'START_DEFENSES_REQUESTED'
   | 'DISPLAY_STARTED'
   | 'ZOOM_OPEN_REQUESTED'
@@ -138,8 +139,9 @@ export interface QueueItem {
 export interface Command {
   id: string
   sessionId: string
-  type: 'open_presentation' | 'close_presentation' | 'set_current_student' | 'start_defense_display' | 'show_display' | 'open_zoom'
+  type: 'open_presentation' | 'close_presentation' | 'set_current_student' | 'start_defense_display' | 'show_display' | 'open_zoom' | 'open_upload_page'
   studentId?: string
+  studentName?: string
   targetStationId?: string
   zoomUrl?: string
   status: 'pending' | 'running' | 'done' | 'error'

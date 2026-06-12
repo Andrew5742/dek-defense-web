@@ -554,6 +554,29 @@ export function requestOpenZoom(state: AppState, sessionId: string, studentId?: 
   })
 }
 
+export function requestOpenUploadPage(state: AppState, sessionId: string, studentId: string): AppState {
+  const session = state.sessions.find((s) => s.id === sessionId)
+  const student = state.students.find((s) => s.id === studentId)
+  const command: Command = {
+    id: uid('cmd'),
+    sessionId,
+    type: 'open_upload_page',
+    studentId,
+    studentName: student?.fullName || '',
+    targetStationId: targetStationId(state, session),
+    status: 'pending',
+    createdAt: nowIso(),
+    updatedAt: nowIso()
+  }
+  return requestCommand(state, command, {
+    sessionId,
+    type: 'UPLOAD_PAGE_OPEN_REQUESTED',
+    actor: 'admin',
+    message: `Відкрито сторінку завантаження презентації: ${student?.fullName || studentId}`,
+    payload: { commandId: command.id, studentId }
+  })
+}
+
 export function requestStartDefenses(state: AppState, sessionId: string): AppState {
   const session = state.sessions.find((s) => s.id === sessionId)
   const command: Command = {

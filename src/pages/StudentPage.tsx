@@ -40,6 +40,8 @@ export function StudentPage({ state, activeSession, publicMode = false }: Props)
     .filter((s) => [s.fullName, s.groupName, s.thesisTitleEdited].join(' ').toLowerCase().includes(query.toLowerCase()))
     .slice(0, 20)
   const selectedAgentUploadPageUrl = selected ? getAgentUploadPageUrl(state, selected) || desktopUploadPageUrl : undefined
+  const selectedQueueItem = selected ? state.queue.find((q) => q.sessionId === selected.sessionId && q.studentId === selected.id) : undefined
+  const selectedHasPresentation = selected?.presentationStatus === 'ready'
 
   return <main className="student-wrap">
     <div className="student-box">
@@ -65,11 +67,14 @@ export function StudentPage({ state, activeSession, publicMode = false }: Props)
         <p><b>Тема:</b> {selected.thesisTitleEdited}</p>
         <p><b>Керівник:</b> {selected.supervisorEdited}</p>
         <p><b>Статус:</b> <StatusBadge value={selected.registrationStatus} /> <StatusBadge value={selected.presentationStatus} /></p>
+        {selectedQueueItem && <div className="ok-box">Ви вже в черзі під номером {selectedQueueItem.position}. Повторно записуватися не потрібно.</div>}
         {open ? <div className="upload-box">
           <h3>Щоб завершити запис, обов’язково завантажте презентацію</h3>
           <p>Дозволені формати: PDF, PPTX, PPT, ODP.</p>
           <p className="hint">Файл зберігається локально на цьому ПК захисту через Electron Agent. PPTX/PPT/ODP буде відкрито напряму через PowerPoint у повноекранному режимі.</p>
-          {selectedAgentUploadPageUrl
+          {selectedQueueItem && selectedHasPresentation
+            ? <div className="ok-box">Запис підтверджено: презентація є, місце в черзі збережено.</div>
+            : selectedAgentUploadPageUrl
             ? <p><button type="button" onClick={() => { window.location.href = selectedAgentUploadPageUrl }}>Відкрити завантаження через Electron Agent</button></p>
             : <div className="closed-box">Electron Agent ще не передав адресу завантаження. Перевірте, що десктопна апка запущена саме на ПК захисту.</div>}
           {selected.presentationStatus === 'ready' && <div className="ok-box">Презентація завантажена і готова до відкриття.</div>}

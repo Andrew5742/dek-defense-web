@@ -366,6 +366,35 @@ async function openPresentationFullscreen(prepared, command = {}) {
   await openPowerPointFullscreen(prepared.path);
 }
 
+async function openUploadPage(command = {}) {
+  await closePresentationFullscreen();
+  closeDisplayFullscreen();
+
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    await createMainWindow();
+  }
+
+  const base = uploadServer?.lanUrl || uploadServer?.localUrl || `http://localhost:${UPLOAD_PORT}`;
+  const url = new URL(`${base.replace(/\/+$/, '')}/upload-page`);
+  url.searchParams.set('sessionId', command.sessionId || '');
+  url.searchParams.set('studentId', command.studentId || '');
+  if (command.studentName) url.searchParams.set('studentName', command.studentName);
+
+  const returnUrl = new URL(WEB_APP_URL);
+  returnUrl.searchParams.set('desktop', 'defense');
+  returnUrl.searchParams.set('role', 'student');
+  returnUrl.searchParams.set('station', STATION_ID);
+  if (command.sessionId) returnUrl.searchParams.set('session', command.sessionId);
+  url.searchParams.set('returnUrl', returnUrl.toString());
+
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.maximize();
+  mainWindow.moveTop();
+  mainWindow.focus();
+  await mainWindow.loadURL(url.toString());
+}
+
 async function startAgent() {
   if (!firebase) firebase = await createFirebaseClient();
 
@@ -384,6 +413,7 @@ async function startAgent() {
     sendToRenderer,
     openPdfFullscreen,
     openPresentationFullscreen,
+    openUploadPage,
     openDisplayFullscreen,
     closeDisplayFullscreen,
     closePresentationFullscreen

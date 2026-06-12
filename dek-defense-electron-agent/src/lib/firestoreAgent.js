@@ -43,7 +43,7 @@ function withoutUndefined(value) {
 }
 
 class FirestoreAgent {
-  constructor({ firebase, stationId, stationName, uploadUrl, lanUploadUrl, zoomUrl, sendToRenderer, openPdfFullscreen, openPresentationFullscreen, openDisplayFullscreen, closeDisplayFullscreen, closePresentationFullscreen }) {
+  constructor({ firebase, stationId, stationName, uploadUrl, lanUploadUrl, zoomUrl, sendToRenderer, openPdfFullscreen, openPresentationFullscreen, openUploadPage, openDisplayFullscreen, closeDisplayFullscreen, closePresentationFullscreen }) {
     this.firebase = firebase;
     this.db = firebase.db;
     this.stationId = stationId;
@@ -54,6 +54,7 @@ class FirestoreAgent {
     this.sendToRenderer = sendToRenderer;
     this.openPdfFullscreen = openPdfFullscreen;
     this.openPresentationFullscreen = openPresentationFullscreen;
+    this.openUploadPage = openUploadPage;
     this.openDisplayFullscreen = openDisplayFullscreen;
     this.closeDisplayFullscreen = closeDisplayFullscreen;
     this.closePresentationFullscreen = closePresentationFullscreen;
@@ -152,6 +153,13 @@ class FirestoreAgent {
         await shell.openExternal(command.zoomUrl || this.zoomUrl || 'zoommtg://zoom.us/join');
         await this.setCommandStatus(commandId, 'done');
         await this.addEvent('ZOOM_OPENED', { sessionId: command.sessionId, studentId: command.studentId || null });
+        return;
+      }
+
+      if (command.type === 'open_upload_page') {
+        await this.openUploadPage(command);
+        await this.setCommandStatus(commandId, 'done');
+        await this.addEvent('UPLOAD_PAGE_OPENED', { sessionId: command.sessionId, studentId: command.studentId || null });
         return;
       }
 

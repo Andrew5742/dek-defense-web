@@ -28,9 +28,24 @@ function targetStationId(state: AppState, session?: DefenseSession): string {
   return state.stations[0]?.id || 'station_local_demo'
 }
 
-function getOnlineUploadUrl(state: AppState): string | undefined {
+export function getOnlineUploadUrl(state: AppState): string | undefined {
   const station = state.stations.find((item) => item.online && (item.lanUploadUrl || item.localUploadUrl)) || state.stations.find((item) => item.lanUploadUrl || item.localUploadUrl)
   return (station?.lanUploadUrl || station?.localUploadUrl)?.replace(/\/+$/, '')
+}
+
+export function getAgentUploadPageUrl(state: AppState, student: Student): string | undefined {
+  const uploadUrl = getOnlineUploadUrl(state)
+  if (!uploadUrl || typeof window === 'undefined') return undefined
+  try {
+    const url = new URL(`${uploadUrl}/upload-page`)
+    url.searchParams.set('sessionId', student.sessionId)
+    url.searchParams.set('studentId', student.id)
+    url.searchParams.set('studentName', student.fullName)
+    url.searchParams.set('returnUrl', window.location.href)
+    return url.toString()
+  } catch {
+    return undefined
+  }
 }
 
 export function createSession(state: AppState, input: Partial<DefenseSession>): AppState {

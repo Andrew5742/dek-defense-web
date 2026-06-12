@@ -256,20 +256,20 @@ public class Win32Focus {
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
 }
 "@
+Add-Type -AssemblyName System.Windows.Forms
 $SW_SHOWMAXIMIZED = 3
 $HWND_TOPMOST = [IntPtr]::new(-1)
 $HWND_NOTOPMOST = [IntPtr]::new(-2)
-$SWP_NOMOVE = 0x0002
-$SWP_NOSIZE = 0x0001
 $SWP_SHOWWINDOW = 0x0040
 function Focus-Hwnd($hwnd) {
   if ($hwnd -eq $null -or [int64]$hwnd -eq 0) { return }
   $ptr = [IntPtr]::new([int64]$hwnd)
+  $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
   [Win32Focus]::ShowWindowAsync($ptr, $SW_SHOWMAXIMIZED) | Out-Null
-  [Win32Focus]::SetWindowPos($ptr, $HWND_TOPMOST, 0, 0, 0, 0, $SWP_NOMOVE -bor $SWP_NOSIZE -bor $SWP_SHOWWINDOW) | Out-Null
+  [Win32Focus]::SetWindowPos($ptr, $HWND_TOPMOST, $bounds.X, $bounds.Y, $bounds.Width, $bounds.Height, $SWP_SHOWWINDOW) | Out-Null
   Start-Sleep -Milliseconds 120
   [Win32Focus]::SetForegroundWindow($ptr) | Out-Null
-  [Win32Focus]::SetWindowPos($ptr, $HWND_NOTOPMOST, 0, 0, 0, 0, $SWP_NOMOVE -bor $SWP_NOSIZE -bor $SWP_SHOWWINDOW) | Out-Null
+  [Win32Focus]::SetWindowPos($ptr, $HWND_NOTOPMOST, $bounds.X, $bounds.Y, $bounds.Width, $bounds.Height, $SWP_SHOWWINDOW) | Out-Null
 }
 $powerPoint = [Runtime.InteropServices.Marshal]::GetActiveObject('PowerPoint.Application')
 if ($powerPoint -ne $null) {
@@ -304,25 +304,25 @@ public class Win32Focus {
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
 }
 "@
+Add-Type -AssemblyName System.Windows.Forms
 $SW_SHOWMAXIMIZED = 3
 $HWND_TOPMOST = [IntPtr]::new(-1)
 $HWND_NOTOPMOST = [IntPtr]::new(-2)
-$SWP_NOMOVE = 0x0002
-$SWP_NOSIZE = 0x0001
 $SWP_SHOWWINDOW = 0x0040
 function Focus-Hwnd($hwnd) {
   if ($hwnd -eq $null -or [int64]$hwnd -eq 0) { return }
   $ptr = [IntPtr]::new([int64]$hwnd)
+  $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
   [Win32Focus]::ShowWindowAsync($ptr, $SW_SHOWMAXIMIZED) | Out-Null
-  [Win32Focus]::SetWindowPos($ptr, $HWND_TOPMOST, 0, 0, 0, 0, $SWP_NOMOVE -bor $SWP_NOSIZE -bor $SWP_SHOWWINDOW) | Out-Null
+  [Win32Focus]::SetWindowPos($ptr, $HWND_TOPMOST, $bounds.X, $bounds.Y, $bounds.Width, $bounds.Height, $SWP_SHOWWINDOW) | Out-Null
   Start-Sleep -Milliseconds 120
   [Win32Focus]::SetForegroundWindow($ptr) | Out-Null
-  [Win32Focus]::SetWindowPos($ptr, $HWND_NOTOPMOST, 0, 0, 0, 0, $SWP_NOMOVE -bor $SWP_NOSIZE -bor $SWP_SHOWWINDOW) | Out-Null
+  [Win32Focus]::SetWindowPos($ptr, $HWND_NOTOPMOST, $bounds.X, $bounds.Y, $bounds.Width, $bounds.Height, $SWP_SHOWWINDOW) | Out-Null
 }
 $filePath = ${psQuote(filePath)}
 $powerPoint = New-Object -ComObject PowerPoint.Application
 $powerPoint.Visible = -1
-$presentation = $powerPoint.Presentations.Open($filePath, -1, 0, -1)
+$presentation = $powerPoint.Presentations.Open($filePath, -1, 0, 0)
 try { $presentation.SlideShowSettings.ShowPresenterView = 0 } catch {}
 $presentation.SlideShowSettings.ShowType = 1
 $presentation.SlideShowSettings.Run() | Out-Null
@@ -339,7 +339,7 @@ for ($i = 0; $i -lt 30; $i++) {
 if ($slideShow -ne $null) {
   try { Focus-Hwnd $slideShow.HWND } catch {}
 }
-try { $powerPoint.Activate() | Out-Null } catch {}
+try { $powerPoint.WindowState = 2 } catch {}
 `;
     const child = spawn('powershell.exe', [
       '-NoProfile',

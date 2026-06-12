@@ -46,6 +46,9 @@ function renderUploadPage({ identity, error = '', success = false, presentation 
   const fallbackAction = uploadPageUrl(identity, '/upload-page');
   const uploadAction = uploadPageUrl(identity, '/upload');
   const confirmTarget = identity.returnUrl || uploadPageUrl(identity, '/upload-page');
+  const backLink = identity.returnUrl
+    ? `<a class="button secondary" href="${escapeHtml(identity.returnUrl)}">Повернутися до запису</a>`
+    : '';
   const initialStatus = success
     ? `<div class="ok"><b>Презентацію прийнято.</b><br>${escapeHtml(presentation?.fileName || '')}</div>`
     : error
@@ -97,7 +100,7 @@ function renderUploadPage({ identity, error = '', success = false, presentation 
       <input type="hidden" name="studentName" value="${escapeHtml(identity.studentName)}">
       <input type="hidden" name="returnUrl" value="${escapeHtml(identity.returnUrl)}">
       <label><b>Оберіть презентацію</b><input id="presentationInput" name="presentation" type="file" accept=".pdf,.pptx,.ppt,.odp" required></label>
-      <button id="uploadBtn" type="submit">Завантажити в Agent</button>
+      <button id="uploadBtn" type="submit">Завантажити в Agent</button>${backLink}
     </form>
     <div id="progressWrap" class="progress-wrap">
       <div class="progress-track"><div id="progressBar" class="progress-bar"></div></div>

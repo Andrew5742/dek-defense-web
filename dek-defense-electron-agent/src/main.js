@@ -89,6 +89,7 @@ function openDisplayFullscreen(command = {}) {
   });
 
   const url = new URL(WEB_APP_URL);
+  url.searchParams.set('desktop', 'defense');
   url.searchParams.set('role', 'display');
   url.searchParams.set('kiosk', '1');
   url.searchParams.set('station', STATION_ID);

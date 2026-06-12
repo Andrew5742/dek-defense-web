@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { AppState, DefenseSession, Student } from '../shared/types'
 import { canRegister } from '../shared/utils'
-import { getAgentUploadPageUrl, uploadPresentation } from '../services/actions'
+import { getAgentUploadPageUrl } from '../services/actions'
 import { StatusBadge } from '../components/StatusBadge'
 
 type Props = { state: AppState; setState: (s: AppState) => void; activeSession?: DefenseSession; publicMode?: boolean }
@@ -15,10 +15,9 @@ function buildUploadPageUrl(baseUrl: string, student: Student) {
   return url.toString()
 }
 
-export function StudentPage({ state, setState, activeSession, publicMode = false }: Props) {
+export function StudentPage({ state, activeSession, publicMode = false }: Props) {
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<Student | null>(null)
-  const [busy, setBusy] = useState(false)
   const [desktopUploadPageUrl, setDesktopUploadPageUrl] = useState('')
 
   useEffect(() => {
@@ -41,21 +40,6 @@ export function StudentPage({ state, setState, activeSession, publicMode = false
     .filter((s) => [s.fullName, s.groupName, s.thesisTitleEdited].join(' ').toLowerCase().includes(query.toLowerCase()))
     .slice(0, 20)
   const selectedAgentUploadPageUrl = selected ? getAgentUploadPageUrl(state, selected) || desktopUploadPageUrl : undefined
-
-  async function handleUpload(file?: File) {
-    if (!file || !selected) return
-    const agentUploadPageUrl = getAgentUploadPageUrl(state, selected) || desktopUploadPageUrl
-    if (agentUploadPageUrl) {
-      window.location.href = agentUploadPageUrl
-      return
-    }
-    setBusy(true)
-    const next = await uploadPresentation(state, selected.id, file, 'student')
-    setState(next)
-    const updated = next.students.find((s) => s.id === selected.id) || selected
-    setSelected(updated)
-    setBusy(false)
-  }
 
   return <main className="student-wrap">
     <div className="student-box">
@@ -84,12 +68,12 @@ export function StudentPage({ state, setState, activeSession, publicMode = false
         {open ? <div className="upload-box">
           <h3>Щоб завершити запис, обов’язково завантажте презентацію</h3>
           <p>Дозволені формати: PDF, PPTX, PPT, ODP.</p>
-          <p className="hint">Файл зберігається локально на цьому ПК захисту через Electron Agent. PPTX/PPT/ODP буде автоматично підготовлено до відкриття або запущено напряму через PowerPoint.</p>
-          {selectedAgentUploadPageUrl && <p><button type="button" onClick={() => { window.location.href = selectedAgentUploadPageUrl }}>Відкрити завантаження через Electron Agent</button></p>}
-          <input type="file" accept=".pdf,.pptx,.ppt,.odp" disabled={busy} onChange={(e) => void handleUpload(e.target.files?.[0])} />
-          {busy && <p>Завантаження...</p>}
+          <p className="hint">Файл зберігається локально на цьому ПК захисту через Electron Agent. PPTX/PPT/ODP буде відкрито напряму через PowerPoint у повноекранному режимі.</p>
+          {selectedAgentUploadPageUrl
+            ? <p><button type="button" onClick={() => { window.location.href = selectedAgentUploadPageUrl }}>Відкрити завантаження через Electron Agent</button></p>
+            : <div className="closed-box">Electron Agent ще не передав адресу завантаження. Перевірте, що десктопна апка запущена саме на ПК захисту.</div>}
           {selected.presentationStatus === 'ready' && <div className="ok-box">Презентація завантажена і готова до відкриття.</div>}
-          {selected.presentationStatus === 'conversion_required' && <div className="warn-box">Презентація завантажена. Потрібна конвертація в PDF через Local Defense Agent.</div>}
+          {selected.presentationStatus === 'conversion_required' && <div className="warn-box">Презентація завантажена. Для PPT/PPTX/ODP система відкриє файл напряму через PowerPoint.</div>}
           {selected.presentationStatus === 'error' && <div className="closed-box">
             Презентацію не передано в Electron Agent. Зверніться до секретаря або перевірте, що Agent запущений на ПК захисту.
             {selected.notes && <><br /><small>{selected.notes.split('\n').slice(-1)[0]}</small></>}

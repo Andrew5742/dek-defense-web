@@ -108,13 +108,17 @@ function deletedIds(state: AppState, eventType: 'STUDENT_DELETED' | 'SESSION_DEL
   return ids
 }
 
-function removedQueueKeys(state: AppState) {
-  const keys = new Set<string>()
+function removedQueueTimestamps(state: AppState) {
+  const keys = new Map<string, number>()
   for (const event of state.events) {
     if (event.type !== 'QUEUE_REMOVED') continue
     const sessionId = event.payload?.sessionId
     const studentId = event.payload?.studentId
-    if (typeof sessionId === 'string' && typeof studentId === 'string') keys.add(`${sessionId}:${studentId}`)
+    const removedAt = Date.parse(event.createdAt)
+    if (typeof sessionId === 'string' && typeof studentId === 'string' && Number.isFinite(removedAt)) {
+      const key = `${sessionId}:${studentId}`
+      keys.set(key, Math.max(keys.get(key) || 0, removedAt))
+    }
   }
   return keys
 }
@@ -122,9 +126,16 @@ function removedQueueKeys(state: AppState) {
 function mergeStateForSave(remote: AppState, local: AppState): AppState {
   const deletedStudentIds = deletedIds(local, 'STUDENT_DELETED')
   const deletedSessionIds = deletedIds(local, 'SESSION_DELETED')
-  const removedQueue = removedQueueKeys(local)
+  const removedQueue = removedQueueTimestamps(local)
   const keepSession = (sessionId?: string) => !sessionId || !deletedSessionIds.has(sessionId)
   const keepStudent = (studentId?: string) => !studentId || !deletedStudentIds.has(studentId)
+  const keepQueueItem = (item: { sessionId: string; studentId: string; updatedAt?: string; createdAt?: string }) => {
+    if (!keepSession(item.sessionId) || !keepStudent(item.studentId)) return false
+    const removedAt = removedQueue.get(`${item.sessionId}:${item.studentId}`)
+    if (!removedAt) return true
+    const itemAt = Date.parse(item.updatedAt || item.createdAt || '')
+    return Number.isFinite(itemAt) && itemAt > removedAt
+  }
   const newestActiveSession = newestIso(local.events[0]?.createdAt, remote.events[0]?.createdAt) === local.events[0]?.createdAt
     ? local.activeSessionId
     : remote.activeSessionId
@@ -137,7 +148,7 @@ function mergeStateForSave(remote: AppState, local: AppState): AppState {
     groups: mergePreferNewest(remote.groups, local.groups).filter((item) => keepSession(item.sessionId)),
     students: mergePreferNewest(remote.students, local.students).filter((item) => keepSession(item.sessionId) && !deletedStudentIds.has(item.id)),
     presentations: mergePreferNewest(remote.presentations, local.presentations).filter((item) => keepSession(item.sessionId) && keepStudent(item.studentId)),
-    queue: mergePreferNewest(remote.queue, local.queue).filter((item) => keepSession(item.sessionId) && keepStudent(item.studentId) && !removedQueue.has(`${item.sessionId}:${item.studentId}`)),
+    queue: mergePreferNewest(remote.queue, local.queue).filter(keepQueueItem),
     commands: mergePreferNewest(remote.commands, local.commands).filter((item) => keepSession(item.sessionId) && keepStudent(item.studentId)),
     stations: mergePreferNewest(remote.stations, local.stations),
     protocols: mergePreferNewest(remote.protocols, local.protocols).filter((item) => keepSession(item.sessionId)),

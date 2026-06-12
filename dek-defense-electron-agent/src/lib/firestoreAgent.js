@@ -1,8 +1,7 @@
 const path = require('path');
 const fs = require('fs');
 const { shell } = require('electron');
-const { convertToPdf } = require('./converter');
-const { getStudentPresentationDir, ensureDir } = require('./paths');
+const { getStudentPresentationDir } = require('./paths');
 
 const APP_STATE_COLLECTION = 'dek_app';
 const APP_STATE_DOC = 'state';
@@ -361,27 +360,13 @@ class FirestoreAgent {
       return { kind: 'pdf', path: source.full, sourcePath: source.full, extension: '.pdf' };
     }
 
-    const convertedDir = ensureDir(path.join(dir, 'converted'));
-    await this.updatePresentation(sessionId, studentId, { status: 'converting', convertedPdfReady: false });
-    try {
-      const pdfPath = await convertToPdf(source.full, convertedDir);
-      await this.updatePresentation(sessionId, studentId, {
-        status: 'ready',
-        convertedPdfName: path.basename(pdfPath),
-        convertedPdfReady: true,
-        directOpenFallback: false,
-        convertedAt: this.firebase.serverTimestamp()
-      });
-      return { kind: 'pdf', path: pdfPath, sourcePath: source.full, extension: ext };
-    } catch (error) {
-      await this.updatePresentation(sessionId, studentId, {
-        status: 'ready',
-        convertedPdfReady: false,
-        directOpenFallback: true,
-        errorMessage: error.message
-      });
-      return { kind: 'source', path: source.full, sourcePath: source.full, extension: ext, conversionError: error.message };
-    }
+    await this.updatePresentation(sessionId, studentId, {
+      status: 'ready',
+      convertedPdfReady: false,
+      directOpenFallback: true,
+      sourceFileName: source.name
+    });
+    return { kind: 'source', path: source.full, sourcePath: source.full, extension: ext };
   }
 }
 

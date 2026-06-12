@@ -258,20 +258,8 @@ public class Win32Focus {
 "@
 Add-Type -AssemblyName System.Windows.Forms
 $SW_SHOWMAXIMIZED = 3
-$SW_MINIMIZE = 6
 $HWND_TOPMOST = [IntPtr]::new(-1)
-$HWND_NOTOPMOST = [IntPtr]::new(-2)
 $SWP_SHOWWINDOW = 0x0040
-function Minimize-PowerPointEditors($slideShowHwnds) {
-  foreach ($process in @(Get-Process -Name POWERPNT -ErrorAction SilentlyContinue)) {
-    try {
-      $handle = [int64]$process.MainWindowHandle
-      if ($handle -ne 0 -and -not $slideShowHwnds.Contains($handle)) {
-        [Win32Focus]::ShowWindowAsync([IntPtr]::new($handle), $SW_MINIMIZE) | Out-Null
-      }
-    } catch {}
-  }
-}
 function Focus-Hwnd($hwnd) {
   if ($hwnd -eq $null -or [int64]$hwnd -eq 0) { return }
   $ptr = [IntPtr]::new([int64]$hwnd)
@@ -280,18 +268,14 @@ function Focus-Hwnd($hwnd) {
   [Win32Focus]::SetWindowPos($ptr, $HWND_TOPMOST, $bounds.X, $bounds.Y, $bounds.Width, $bounds.Height, $SWP_SHOWWINDOW) | Out-Null
   Start-Sleep -Milliseconds 120
   [Win32Focus]::SetForegroundWindow($ptr) | Out-Null
-  [Win32Focus]::SetWindowPos($ptr, $HWND_NOTOPMOST, $bounds.X, $bounds.Y, $bounds.Width, $bounds.Height, $SWP_SHOWWINDOW) | Out-Null
 }
 $powerPoint = [Runtime.InteropServices.Marshal]::GetActiveObject('PowerPoint.Application')
 if ($powerPoint -ne $null) {
-  $slideShowHwnds = New-Object 'System.Collections.Generic.HashSet[Int64]'
   foreach ($show in @($powerPoint.SlideShowWindows)) {
     try {
-      $slideShowHwnds.Add([int64]$show.HWND) | Out-Null
       Focus-Hwnd $show.HWND
     } catch {}
   }
-  Minimize-PowerPointEditors $slideShowHwnds
   foreach ($show in @($powerPoint.SlideShowWindows)) {
     try { Focus-Hwnd $show.HWND } catch {}
   }
@@ -324,20 +308,8 @@ public class Win32Focus {
 "@
 Add-Type -AssemblyName System.Windows.Forms
 $SW_SHOWMAXIMIZED = 3
-$SW_MINIMIZE = 6
 $HWND_TOPMOST = [IntPtr]::new(-1)
-$HWND_NOTOPMOST = [IntPtr]::new(-2)
 $SWP_SHOWWINDOW = 0x0040
-function Minimize-PowerPointEditors($slideShowHwnds) {
-  foreach ($process in @(Get-Process -Name POWERPNT -ErrorAction SilentlyContinue)) {
-    try {
-      $handle = [int64]$process.MainWindowHandle
-      if ($handle -ne 0 -and -not $slideShowHwnds.Contains($handle)) {
-        [Win32Focus]::ShowWindowAsync([IntPtr]::new($handle), $SW_MINIMIZE) | Out-Null
-      }
-    } catch {}
-  }
-}
 function Focus-Hwnd($hwnd) {
   if ($hwnd -eq $null -or [int64]$hwnd -eq 0) { return }
   $ptr = [IntPtr]::new([int64]$hwnd)
@@ -346,7 +318,6 @@ function Focus-Hwnd($hwnd) {
   [Win32Focus]::SetWindowPos($ptr, $HWND_TOPMOST, $bounds.X, $bounds.Y, $bounds.Width, $bounds.Height, $SWP_SHOWWINDOW) | Out-Null
   Start-Sleep -Milliseconds 120
   [Win32Focus]::SetForegroundWindow($ptr) | Out-Null
-  [Win32Focus]::SetWindowPos($ptr, $HWND_NOTOPMOST, $bounds.X, $bounds.Y, $bounds.Width, $bounds.Height, $SWP_SHOWWINDOW) | Out-Null
 }
 $filePath = ${psQuote(filePath)}
 $powerPoint = New-Object -ComObject PowerPoint.Application
@@ -367,10 +338,7 @@ for ($i = 0; $i -lt 30; $i++) {
 }
 if ($slideShow -ne $null) {
   try {
-    $slideShowHwnds = New-Object 'System.Collections.Generic.HashSet[Int64]'
-    $slideShowHwnds.Add([int64]$slideShow.HWND) | Out-Null
     Focus-Hwnd $slideShow.HWND
-    Minimize-PowerPointEditors $slideShowHwnds
     Start-Sleep -Milliseconds 120
     Focus-Hwnd $slideShow.HWND
   } catch {}

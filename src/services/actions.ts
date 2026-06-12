@@ -29,8 +29,8 @@ function targetStationId(state: AppState, session?: DefenseSession): string {
 }
 
 function getOnlineUploadUrl(state: AppState): string | undefined {
-  const station = state.stations.find((item) => item.online && item.localUploadUrl) || state.stations.find((item) => item.localUploadUrl)
-  return station?.localUploadUrl?.replace(/\/+$/, '')
+  const station = state.stations.find((item) => item.online && (item.lanUploadUrl || item.localUploadUrl)) || state.stations.find((item) => item.lanUploadUrl || item.localUploadUrl)
+  return (station?.lanUploadUrl || station?.localUploadUrl)?.replace(/\/+$/, '')
 }
 
 export function createSession(state: AppState, input: Partial<DefenseSession>): AppState {
@@ -361,6 +361,7 @@ export async function uploadPresentation(state: AppState, studentId: string, fil
   const previous = state.presentations.filter((p) => p.studentId === studentId)
   const version = previous.length + 1
   const agentUploadUrl = getOnlineUploadUrl(state)
+  let agentUploadError = ''
   if (agentUploadUrl) {
     try {
       const body = new FormData()
@@ -409,8 +410,28 @@ export async function uploadPresentation(state: AppState, studentId: string, fil
         payload: { studentId, fileName: file.name, version, uploadUrl: agentUploadUrl }
       })
     } catch (error) {
-      console.warn('Local Defense Agent upload failed; falling back to browser storage', error)
+      agentUploadError = error instanceof Error ? error.message : String(error)
+      console.warn('Local Defense Agent upload failed', error)
     }
+  }
+  if (ext !== 'pdf') {
+    const message = agentUploadUrl
+      ? `Не вдалося передати презентацію в Local Defense Agent (${agentUploadUrl}): ${agentUploadError || 'невідома помилка'}`
+      : 'Local Defense Agent не знайдено в мережі. Запустіть Electron Agent на ПК захисту і перезавантажте сторінку.'
+    return addEvent({
+      ...state,
+      students: state.students.map((s) =>
+        s.id === studentId
+          ? { ...s, presentationStatus: 'error', notes: [s.notes, message].filter(Boolean).join('\n'), updatedAt: nowIso() }
+          : s
+      )
+    }, {
+      sessionId: student.sessionId,
+      type: 'PRESENTATION_UPLOADED',
+      actor,
+      message,
+      payload: { studentId, fileName: file.name, uploadUrl: agentUploadUrl, error: agentUploadError }
+    })
   }
   const storageKey = `${student.sessionId}/${studentId}/v${version}_${sanitizeFilePart(file.name)}`
   await saveBlob(storageKey, file)

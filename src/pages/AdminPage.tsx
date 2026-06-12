@@ -465,6 +465,7 @@ function DiagnosticsPanel({ state, activeSession }: { state: AppState; activeSes
       <li>Активна сесія: {activeSession ? activeSession.title + ' · ' + activeSession.date : 'не обрано'}</li>
       <li>Студенти активної сесії: {activeSessionStudents}</li>
       <li>Electron Agent онлайн: {onlineStations.length ? onlineStations.map((s) => s.name || s.id).join(', ') : 'не бачимо станцію'}</li>
+      <li>Upload URL Agent: {onlineStations.length ? onlineStations.map((s) => s.lanUploadUrl || s.localUploadUrl || 'без upload URL').join(', ') : '—'}</li>
       <li>Команди агента pending: {pendingCommands}</li>
       <li>Команди з помилкою: {failedCommands}</li>
     </ul>

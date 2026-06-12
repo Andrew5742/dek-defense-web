@@ -55,12 +55,12 @@ export function StudentPage({ state, setState, activeSession, publicMode = false
         {open ? <div className="upload-box">
           <h3>Щоб завершити запис, обов’язково завантажте презентацію</h3>
           <p>Дозволені формати: PDF, PPTX, PPT, ODP.</p>
-          <p className="hint">У цій локальній web-версії PDF можна відкрити одразу. PPTX/PPT/ODP не відкриваються в браузері напряму: їх має конвертувати Local Defense Agent на ПК доповідача.</p>
+          <p className="hint">PPTX/PPT/ODP мають завантажуватися напряму в Electron Agent на ПК захисту. Якщо Agent недоступний у мережі, система покаже помилку і попросить звернутися до секретаря.</p>
           <input type="file" accept=".pdf,.pptx,.ppt,.odp" disabled={busy} onChange={(e) => void handleUpload(e.target.files?.[0])} />
           {busy && <p>Завантаження...</p>}
           {selected.presentationStatus === 'ready' && <div className="ok-box">Презентація завантажена і готова до відкриття.</div>}
           {selected.presentationStatus === 'conversion_required' && <div className="warn-box">Презентація завантажена. Потрібна конвертація в PDF через Local Defense Agent.</div>}
-          {selected.presentationStatus === 'error' && <div className="closed-box">Помилка презентації. Зверніться до секретаря.</div>}
+          {selected.presentationStatus === 'error' && <div className="closed-box">Презентацію не передано в Electron Agent. Зверніться до секретаря або перевірте, що Agent запущений на ПК захисту.</div>}
         </div> : <div className="closed-box">Запис закрито. Зверніться до секретаря.</div>}
       </div>}
     </div>

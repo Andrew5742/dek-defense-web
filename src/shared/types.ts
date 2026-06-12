@@ -147,6 +147,7 @@ export interface Station {
   activeSessionId?: string
   online: boolean
   localUploadUrl?: string
+  lanUploadUrl?: string
   currentStudentId?: string
   lastHeartbeat: string
 }

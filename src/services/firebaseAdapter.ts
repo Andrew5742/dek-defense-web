@@ -121,6 +121,7 @@ function normalizeStation(id: string, value: Record<string, unknown>): Station {
     activeSessionId: value.activeSessionId ? String(value.activeSessionId) : undefined,
     online: value.online === true,
     localUploadUrl: value.localUploadUrl ? String(value.localUploadUrl) : undefined,
+    lanUploadUrl: value.lanUploadUrl ? String(value.lanUploadUrl) : undefined,
     currentStudentId: value.currentStudentId ? String(value.currentStudentId) : undefined,
     lastHeartbeat: toIso(value.lastHeartbeat || value.updatedAt)
   }

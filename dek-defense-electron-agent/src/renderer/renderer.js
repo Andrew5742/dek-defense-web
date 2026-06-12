@@ -1,4 +1,5 @@
 const logEl = document.getElementById('log');
+
 function log(message, payload) {
   const line = document.createElement('div');
   line.className = 'log-line';
@@ -15,9 +16,9 @@ async function init() {
   const status = await window.dekAgent.getStatus();
   document.getElementById('stationId').textContent = status.stationId;
   document.getElementById('stationName').textContent = status.stationName;
-  document.getElementById('uploadUrl').textContent = status.uploadUrl;
+  document.getElementById('uploadUrl').textContent = status.lanUploadUrl || status.uploadUrl;
   document.getElementById('storageRoot').textContent = status.storageRoot;
-  document.getElementById('addresses').textContent = status.addresses.map((x) => `${x.name}: ${x.address}`).join(', ') || '—';
+  document.getElementById('addresses').textContent = status.addresses.map((x) => `${x.name}: ${x.address}`).join(', ') || '-';
   log('Агент запущено', status);
 }
 

@@ -75,6 +75,65 @@ function mergeById<T extends { id: string }>(local: T[], remote: T[]): T[] {
   return Array.from(map.values())
 }
 
+function newestIso(a?: string, b?: string): string {
+  const aMs = a ? Date.parse(a) : 0
+  const bMs = b ? Date.parse(b) : 0
+  return aMs >= bMs ? (a || b || '') : (b || a || '')
+}
+
+function mergePreferNewest<T extends { id: string; updatedAt?: string; createdAt?: string }>(remote: T[], local: T[]): T[] {
+  const map = new Map<string, T>()
+  for (const item of remote) map.set(item.id, item)
+  for (const item of local) {
+    const current = map.get(item.id)
+    if (!current) {
+      map.set(item.id, item)
+      continue
+    }
+    const currentTime = Date.parse(current.updatedAt || current.createdAt || '')
+    const nextTime = Date.parse(item.updatedAt || item.createdAt || '')
+    map.set(item.id, Number.isFinite(nextTime) && nextTime >= currentTime ? { ...current, ...item } : { ...item, ...current })
+  }
+  return Array.from(map.values())
+}
+
+function deletedIds(state: AppState, eventType: 'STUDENT_DELETED' | 'SESSION_DELETED') {
+  const ids = new Set<string>()
+  for (const event of state.events) {
+    if (event.type !== eventType) continue
+    const key = eventType === 'STUDENT_DELETED' ? 'studentId' : 'sessionId'
+    const id = event.payload?.[key]
+    if (typeof id === 'string') ids.add(id)
+  }
+  return ids
+}
+
+function mergeStateForSave(remote: AppState, local: AppState): AppState {
+  const deletedStudentIds = deletedIds(local, 'STUDENT_DELETED')
+  const deletedSessionIds = deletedIds(local, 'SESSION_DELETED')
+  const keepSession = (sessionId?: string) => !sessionId || !deletedSessionIds.has(sessionId)
+  const keepStudent = (studentId?: string) => !studentId || !deletedStudentIds.has(studentId)
+  const newestActiveSession = newestIso(local.events[0]?.createdAt, remote.events[0]?.createdAt) === local.events[0]?.createdAt
+    ? local.activeSessionId
+    : remote.activeSessionId
+
+  return {
+    ...remote,
+    ...local,
+    activeSessionId: newestActiveSession || local.activeSessionId || remote.activeSessionId,
+    sessions: mergePreferNewest(remote.sessions, local.sessions).filter((item) => !deletedSessionIds.has(item.id)),
+    groups: mergePreferNewest(remote.groups, local.groups).filter((item) => keepSession(item.sessionId)),
+    students: mergePreferNewest(remote.students, local.students).filter((item) => keepSession(item.sessionId) && !deletedStudentIds.has(item.id)),
+    presentations: mergePreferNewest(remote.presentations, local.presentations).filter((item) => keepSession(item.sessionId) && keepStudent(item.studentId)),
+    queue: mergePreferNewest(remote.queue, local.queue).filter((item) => keepSession(item.sessionId) && keepStudent(item.studentId)),
+    commands: mergePreferNewest(remote.commands, local.commands).filter((item) => keepSession(item.sessionId) && keepStudent(item.studentId)),
+    stations: mergePreferNewest(remote.stations, local.stations),
+    protocols: mergePreferNewest(remote.protocols, local.protocols).filter((item) => keepSession(item.sessionId)),
+    importReviews: mergePreferNewest(remote.importReviews, local.importReviews).filter((item) => keepSession(item.sessionId)),
+    events: mergePreferNewest(remote.events, local.events).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)).slice(0, 1000)
+  }
+}
+
 function normalizeCommand(id: string, value: Record<string, unknown>): Command | null {
   if (!value.type || !value.sessionId) return null
   return {
@@ -176,7 +235,17 @@ export class FirebaseRepository implements AppRepository {
 
   async saveState(state: AppState): Promise<void> {
     if (!runtime) return
-    const cleanState = withoutUndefined(state)
+    let stateToSave = state
+    try {
+      const snapshot = await getDoc(this.stateRef())
+      if (snapshot.exists()) {
+        stateToSave = mergeStateForSave(normalizeState(snapshot.data().state), state)
+      }
+    } catch (error) {
+      console.warn('Firestore pre-save merge failed, saving local state', error)
+    }
+
+    const cleanState = withoutUndefined(stateToSave)
     await setDoc(this.stateRef(), {
       state: cleanState,
       updatedAt: serverTimestamp()
@@ -185,7 +254,7 @@ export class FirebaseRepository implements AppRepository {
     const batch = writeBatch(runtime.db)
     let mirroredWrites = 0
 
-    for (const command of state.commands) {
+    for (const command of stateToSave.commands) {
       batch.set(doc(runtime.db, COMMANDS_COLLECTION, command.id), withoutUndefined({
         ...command,
         errorMessage: command.error
@@ -193,7 +262,7 @@ export class FirebaseRepository implements AppRepository {
       mirroredWrites += 1
     }
 
-    for (const presentation of state.presentations) {
+    for (const presentation of stateToSave.presentations) {
       batch.set(doc(runtime.db, PRESENTATIONS_COLLECTION, presentation.id), withoutUndefined(presentation), { merge: true })
       mirroredWrites += 1
     }

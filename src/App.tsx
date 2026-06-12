@@ -9,45 +9,35 @@ import { DisplayPage } from './pages/DisplayPage'
 import { AgentPage } from './pages/AgentPage'
 
 type Page = 'admin' | 'student' | 'display' | 'agent'
-type DeviceRole = 'unset' | 'admin' | 'defense'
 
-const ROLE_STORAGE_KEY = 'dek-defense-device-role'
 const ADMIN_AUTH_KEY = 'dek-defense-admin-auth'
 const DISPLAY_LOCK_KEY = 'dek-defense-display-locked'
 const DISPLAY_EXIT_PASSWORD = '0987Kiis'
 
-function normalizeDefensePage(value: string | null): Page {
+function isDesktopDefenseRuntime() {
+  const params = new URLSearchParams(window.location.search)
+  return params.get('desktop') === 'defense' || window.dekAgent?.isDesktop === true
+}
+
+function normalizeDefensePage(value: string | null): Exclude<Page, 'admin'> {
   if (value === 'agent' || value === 'display' || value === 'student') return value
   if (value === 'presentation' || value === 'station' || value === 'defense') return 'student'
   return 'student'
 }
 
-function readInitialRole(): { role: DeviceRole; page: Page } {
-  const params = new URLSearchParams(location.search)
-  const roleFromUrl = params.get('role') || params.get('view')
-
-  if (roleFromUrl === 'student' || roleFromUrl === 'agent' || roleFromUrl === 'display' || roleFromUrl === 'defense' || roleFromUrl === 'station') {
-    const page = roleFromUrl === 'display' && params.get('kiosk') !== '1' && params.get('display') !== '1'
-      ? 'student'
-      : normalizeDefensePage(roleFromUrl)
-    return { role: 'defense', page }
-  }
-
-  const savedRole = localStorage.getItem(ROLE_STORAGE_KEY)
-  const isAdminAuthed = localStorage.getItem(ADMIN_AUTH_KEY) === '1'
-
-  if (savedRole === 'admin' && isAdminAuthed) return { role: 'admin', page: 'admin' }
-  if (savedRole === 'defense') return { role: 'defense', page: 'student' }
-
-  return { role: 'unset', page: 'admin' }
+function readInitialPage(): Page {
+  if (!isDesktopDefenseRuntime()) return 'admin'
+  const params = new URLSearchParams(window.location.search)
+  return normalizeDefensePage(params.get('role') || params.get('view'))
 }
 
-function writeUrlForRole(role: DeviceRole, page: Page) {
+function writeDesktopUrl(page: Page) {
+  if (!isDesktopDefenseRuntime()) return
   const url = new URL(window.location.href)
   url.search = ''
-  if (role === 'admin') url.searchParams.set('role', 'admin')
-  if (role === 'defense') url.searchParams.set('role', page)
-  if (role === 'defense' && page === 'display') url.searchParams.set('display', '1')
+  url.searchParams.set('desktop', 'defense')
+  url.searchParams.set('role', page === 'admin' ? 'student' : page)
+  if (page === 'display') url.searchParams.set('display', '1')
   window.history.replaceState(null, '', url.toString())
 }
 
@@ -55,7 +45,7 @@ function requestAppFullscreen() {
   document.documentElement.requestFullscreen?.().catch(() => {})
 }
 
-function EntryGate({ onAdminLogin, onDefenseMode }: { onAdminLogin: () => void; onDefenseMode: () => void }) {
+function AdminLogin({ onAdminLogin }: { onAdminLogin: () => void }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -64,9 +54,8 @@ function EntryGate({ onAdminLogin, onDefenseMode }: { onAdminLogin: () => void; 
   async function submitAdmin() {
     setBusy(true)
     try {
-      if (isFirebaseEnabled()) {
-        await signInAdmin(email.trim(), password)
-      }
+      if (isFirebaseEnabled()) await signInAdmin(email.trim(), password)
+      localStorage.setItem(ADMIN_AUTH_KEY, '1')
       setError('')
       onAdminLogin()
     } catch (error) {
@@ -78,72 +67,64 @@ function EntryGate({ onAdminLogin, onDefenseMode }: { onAdminLogin: () => void; 
 
   return (
     <main className="entry-page">
-      <section className="entry-shell">
+      <section className="entry-shell admin-only-entry">
         <div className="entry-title-row">
           <div>
             <div className="role-kicker">DEK Defense</div>
-            <h1>Вибір ролі цього ПК</h1>
+            <h1>Адмінка комісії</h1>
           </div>
           <div className="entry-env">GitHub Pages + Firebase</div>
         </div>
 
-        <div className="entry-grid">
-          <section className="entry-card admin-login-card">
-            <h2>Адміністрування</h2>
-            <p>Вхід для секретаря через Firebase Auth. Після входу студентський режим на цьому ПК заблокований.</p>
-            <label>
-              Email
-              <input value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" />
-            </label>
-            <label>
-              Пароль
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void submitAdmin() }} autoComplete="current-password" />
-            </label>
-            {error && <div className="form-error">{error}</div>}
-            <button className="primary full-width" disabled={busy} onClick={() => void submitAdmin()}>{busy ? 'Вхід...' : 'Увійти в адмінку'}</button>
-            <div className="login-hint">Використайте Firebase Auth акаунт секретаря.</div>
-          </section>
-
-          <section className="entry-card defense-card">
-            <h2>Це ПК для захисту</h2>
-            <p>Режим для аудиторії / ПК доповідача: пошук студента, запис, завантаження презентації, display і станція показу.</p>
-            <ul>
-              <li>Адмінка на цьому ПК буде заблокована.</li>
-              <li>Display fullscreen відкривається без навігаційних кнопок.</li>
-              <li>Вихід із захисного fullscreen через пароль {DISPLAY_EXIT_PASSWORD}.</li>
-            </ul>
-            <button className="secondary strong full-width" onClick={onDefenseMode}>Це ПК для захисту</button>
-          </section>
-        </div>
+        <section className="entry-card admin-login-card">
+          <h2>Вхід секретаря / комісії</h2>
+          <p>GitHub Pages версія містить тільки адмінку. Запис студентів, display і локальне відкриття презентацій працюють у desktop Electron застосунку на ПК захисту.</p>
+          <label>
+            Email
+            <input value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" />
+          </label>
+          <label>
+            Пароль
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void submitAdmin() }} autoComplete="current-password" />
+          </label>
+          {error && <div className="form-error">{error}</div>}
+          <button className="primary full-width" disabled={busy} onClick={() => void submitAdmin()}>{busy ? 'Вхід...' : 'Увійти в адмінку'}</button>
+          <div className="login-hint">Для одночасної роботи кількох людей можна використовувати той самий Firebase акаунт: зміни мержаться перед записом у Firestore.</div>
+        </section>
       </section>
     </main>
   )
 }
-function RoleHeader({ role, page, setPage, resetRole, activeSessionTitle }: {
-  role: DeviceRole
-  page: Page
-  setPage: (p: Page) => void
-  resetRole: () => void
-  activeSessionTitle?: string
-}) {
-  const isDefense = role === 'defense'
+
+function AdminHeader({ activeSessionTitle, onLogout }: { activeSessionTitle?: string; onLogout: () => void }) {
   return (
     <header className="locked-role-header">
       <div>
         <div className="brand">DEK Defense</div>
-        <div className="subbrand">
-          {role === 'admin' ? 'адміністрування · студентський інтерфейс заблоковано' : 'ПК для захисту · адмінка заблокована'}
-          {activeSessionTitle ? ` · ${activeSessionTitle}` : ''}
-        </div>
+        <div className="subbrand">адмінка комісії{activeSessionTitle ? ` · ${activeSessionTitle}` : ''}</div>
       </div>
-      {isDefense && (
-        <nav className="nav locked-nav">
-          <button className={page === 'student' ? 'active' : ''} onClick={() => setPage('student')}>Запис студентів</button>
-          <button className={page === 'agent' ? 'active' : ''} onClick={() => setPage('agent')}>Станція показу</button>
-          <button className={page === 'display' ? 'active' : ''} onClick={() => setPage('display')}>Display</button>
-        </nav>
-      )}
-      <button className="secondary danger-lite" onClick={resetRole}>Змінити роль ПК</button>
+      <button className="secondary danger-lite" onClick={onLogout}>Вийти</button>
+    </header>
+  )
+}
+
+function DefenseHeader({ page, setPage, activeSessionTitle }: {
+  page: Exclude<Page, 'admin'>
+  setPage: (p: Exclude<Page, 'admin'>) => void
+  activeSessionTitle?: string
+}) {
+  return (
+    <header className="locked-role-header">
+      <div>
+        <div className="brand">DEK Defense Station</div>
+        <div className="subbrand">desktop ПК захисту · агент запущений під капотом{activeSessionTitle ? ` · ${activeSessionTitle}` : ''}</div>
+      </div>
+      <nav className="nav locked-nav">
+        <button className={page === 'student' ? 'active' : ''} onClick={() => setPage('student')}>Запис студентів</button>
+        <button className={page === 'agent' ? 'active' : ''} onClick={() => setPage('agent')}>Станція показу</button>
+        <button className={page === 'display' ? 'active' : ''} onClick={() => setPage('display')}>Display</button>
+      </nav>
+      <button className="secondary" onClick={() => window.dekAgent?.openStorage?.()}>Папка презентацій</button>
     </header>
   )
 }
@@ -161,8 +142,8 @@ function FullscreenLockOverlay({ onUnlock, onReturnFullscreen }: { onUnlock: () 
   }
   return <div className="fullscreen-lock-overlay">
     <div className="fullscreen-lock-card">
-      <h2>Режим захистів активний</h2>
-      <p>Display/презентація працюють далі. Для виходу з режиму введіть пароль.</p>
+      <h2>Режим захисту активний</h2>
+      <p>Для виходу з display/fullscreen введіть пароль.</p>
       <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') submit() }} placeholder="Пароль виходу" autoFocus />
       {error && <div className="form-error">{error}</div>}
       <div className="toolbar no-margin">
@@ -174,22 +155,20 @@ function FullscreenLockOverlay({ onUnlock, onReturnFullscreen }: { onUnlock: () 
 }
 
 export default function App() {
+  const desktopDefense = isDesktopDefenseRuntime()
   const [state, setStateRaw] = useState<AppState>(emptyState())
   const [loaded, setLoaded] = useState(false)
   const [syncError, setSyncError] = useState('')
-  const [initialRoute] = useState(readInitialRole)
-  const [deviceRole, setDeviceRole] = useState<DeviceRole>(initialRoute.role)
-  const [page, setPageRaw] = useState<Page>(initialRoute.page)
+  const [page, setPageRaw] = useState<Page>(readInitialPage)
+  const [adminAuthed, setAdminAuthed] = useState(() => desktopDefense || localStorage.getItem(ADMIN_AUTH_KEY) === '1')
   const [activeSessionId, setActiveSessionId] = useState<string>('')
-  const [displayLocked, setDisplayLocked] = useState(() => initialRoute.page === 'display' && localStorage.getItem(DISPLAY_LOCK_KEY) === '1')
+  const [displayLocked, setDisplayLocked] = useState(() => desktopDefense && page === 'display' && localStorage.getItem(DISPLAY_LOCK_KEY) === '1')
   const [showLockOverlay, setShowLockOverlay] = useState(false)
   const repository = firebaseRepository || localRepository
 
   useEffect(() => {
     let disposed = false
-    if (initialRoute.page !== 'display') {
-      localStorage.removeItem(DISPLAY_LOCK_KEY)
-    }
+    if (page !== 'display') localStorage.removeItem(DISPLAY_LOCK_KEY)
 
     let timeoutId = 0
     const loadState = Promise.race([
@@ -249,43 +228,15 @@ export default function App() {
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (page === 'display' && event.key === 'Escape') {
-        setShowLockOverlay(true)
-      }
+      if (desktopDefense && page === 'display' && event.key === 'Escape') setShowLockOverlay(true)
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [page])
+  }, [desktopDefense, page])
 
-  function loginAdmin() {
-    localStorage.setItem(ROLE_STORAGE_KEY, 'admin')
-    localStorage.setItem(ADMIN_AUTH_KEY, '1')
-    localStorage.removeItem(DISPLAY_LOCK_KEY)
-    setDisplayLocked(false)
-    setDeviceRole('admin')
-    setPageRaw('admin')
-    writeUrlForRole('admin', 'admin')
-  }
-
-  function chooseDefense() {
-    localStorage.setItem(ROLE_STORAGE_KEY, 'defense')
+  function logoutAdmin() {
     localStorage.removeItem(ADMIN_AUTH_KEY)
-    setDeviceRole('defense')
-    setPageRaw('student')
-    writeUrlForRole('defense', 'student')
-  }
-
-  function resetRole() {
-    localStorage.removeItem(ROLE_STORAGE_KEY)
-    localStorage.removeItem(ADMIN_AUTH_KEY)
-    localStorage.removeItem(DISPLAY_LOCK_KEY)
-    const url = new URL(window.location.href)
-    url.search = ''
-    window.history.replaceState(null, '', url.toString())
-    setDisplayLocked(false)
-    setShowLockOverlay(false)
-    setDeviceRole('unset')
-    setPageRaw('admin')
+    setAdminAuthed(false)
   }
 
   function exitDisplayMode() {
@@ -293,27 +244,17 @@ export default function App() {
     setDisplayLocked(false)
     setShowLockOverlay(false)
     setPageRaw('student')
-    writeUrlForRole('defense', 'student')
+    writeDesktopUrl('student')
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => {})
   }
 
-  function setPage(nextPage: Page) {
+  function setDefensePage(nextPage: Exclude<Page, 'admin'>) {
     if (displayLocked && nextPage !== 'display') {
       setShowLockOverlay(true)
       return
     }
-    if (deviceRole === 'admin') {
-      setPageRaw('admin')
-      writeUrlForRole('admin', 'admin')
-      return
-    }
-    if (deviceRole === 'defense') {
-      const allowed: Page = nextPage === 'admin' ? 'student' : nextPage
-      setPageRaw(allowed)
-      writeUrlForRole('defense', allowed)
-      return
-    }
     setPageRaw(nextPage)
+    writeDesktopUrl(nextPage)
   }
 
   const activeSession = useMemo(
@@ -323,14 +264,14 @@ export default function App() {
 
   if (!loaded) return <div className="boot">Завантаження...</div>
 
-  if (deviceRole === 'unset') {
-    return <EntryGate onAdminLogin={loginAdmin} onDefenseMode={chooseDefense} />
+  if (!desktopDefense && !adminAuthed) {
+    return <AdminLogin onAdminLogin={() => setAdminAuthed(true)} />
   }
 
-  if (deviceRole === 'admin') {
+  if (!desktopDefense) {
     return (
       <>
-        <RoleHeader role="admin" page="admin" setPage={setPage} resetRole={resetRole} activeSessionTitle={activeSession?.title} />
+        <AdminHeader activeSessionTitle={activeSession?.title} onLogout={logoutAdmin} />
         {syncError && <div className="sync-error">{syncError}. Дані на цьому ПК можуть бути не синхронізовані.</div>}
         <AdminPage state={state} setState={setState} activeSession={activeSession} setActiveSessionId={setActiveSessionId} />
       </>
@@ -342,7 +283,7 @@ export default function App() {
 
   return (
     <>
-      {!hideHeader && <RoleHeader role="defense" page={defensePage} setPage={setPage} resetRole={resetRole} activeSessionTitle={activeSession?.title} />}
+      {!hideHeader && <DefenseHeader page={defensePage} setPage={setDefensePage} activeSessionTitle={activeSession?.title} />}
       {syncError && defensePage !== 'display' && <div className="sync-error">{syncError}. Дані на цьому ПК можуть бути не синхронізовані.</div>}
       {defensePage === 'student' && <StudentPage state={state} setState={setState} activeSession={activeSession} publicMode />}
       {defensePage === 'agent' && <AgentPage state={state} setState={setState} activeSession={activeSession} />}

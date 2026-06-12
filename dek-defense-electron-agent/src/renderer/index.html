@@ -11,7 +11,7 @@
     <header class="topbar">
       <div>
         <h1>DEK Defense Station</h1>
-        <p>Electron-агент для ПК захисту</p>
+        <p>Electron-застосунок для ПК захисту</p>
       </div>
       <button id="openStorageBtn">Відкрити папку презентацій</button>
     </header>
@@ -20,11 +20,11 @@
       <h2>Стан агента</h2>
       <table>
         <tbody>
-          <tr><th>Station ID</th><td id="stationId">—</td></tr>
-          <tr><th>Назва</th><td id="stationName">—</td></tr>
-          <tr><th>Upload URL</th><td id="uploadUrl">—</td></tr>
-          <tr><th>Сховище</th><td id="storageRoot">—</td></tr>
-          <tr><th>IP-адреси</th><td id="addresses">—</td></tr>
+          <tr><th>Station ID</th><td id="stationId">-</td></tr>
+          <tr><th>Назва</th><td id="stationName">-</td></tr>
+          <tr><th>Upload URL</th><td id="uploadUrl">-</td></tr>
+          <tr><th>Сховище</th><td id="storageRoot">-</td></tr>
+          <tr><th>IP-адреси</th><td id="addresses">-</td></tr>
         </tbody>
       </table>
     </section>
@@ -36,8 +36,8 @@
 
     <section class="panel warning">
       <h2>Важливо</h2>
-      <p>Ця програма має бути запущена на ПК, з якого відкриватимуться презентації. GitHub Pages/Firebase надсилає команди, а цей агент фізично відкриває файли локально.</p>
-      <p>Для PPTX/PPT/ODP потрібен LibreOffice. PDF відкривається одразу.</p>
+      <p>Основний desktop-інтерфейс відкривається з GitHub Pages у режимі ПК захисту. Якщо ви бачите цей екран, веб-частина не завантажилась, але локальний агент продовжує працювати.</p>
+      <p>Ця програма приймає презентації локально, конвертує PPTX/PPT/ODP у PDF, відкриває PDF або PowerPoint fullscreen і слухає команди комісії через Firebase.</p>
     </section>
   </main>
   <script src="renderer.js"></script>

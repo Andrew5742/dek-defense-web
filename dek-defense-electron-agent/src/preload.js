@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('dekAgent', {
+  isDesktop: true,
   getStatus: () => ipcRenderer.invoke('agent:get-status'),
   openStorage: () => ipcRenderer.invoke('agent:open-storage'),
   openZoom: (zoomUrl) => ipcRenderer.invoke('agent:open-zoom', zoomUrl),

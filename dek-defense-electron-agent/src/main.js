@@ -49,7 +49,14 @@ async function createMainWindow() {
     }
   });
 
-  await mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  const url = new URL(WEB_APP_URL);
+  url.searchParams.set('desktop', 'defense');
+  url.searchParams.set('role', 'student');
+  url.searchParams.set('station', STATION_ID);
+
+  await mainWindow.loadURL(url.toString()).catch(async () => {
+    await mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  });
 }
 
 function openDisplayFullscreen(command = {}) {

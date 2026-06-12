@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { AppState, DefenseSession, Student } from '../shared/types'
 import { canRegister } from '../shared/utils'
 import { getAgentUploadPageUrl, uploadPresentation } from '../services/actions'
@@ -6,22 +6,45 @@ import { StatusBadge } from '../components/StatusBadge'
 
 type Props = { state: AppState; setState: (s: AppState) => void; activeSession?: DefenseSession; publicMode?: boolean }
 
+function buildUploadPageUrl(baseUrl: string, student: Student) {
+  const url = new URL(`${baseUrl.replace(/\/+$/, '')}/upload-page`)
+  url.searchParams.set('sessionId', student.sessionId)
+  url.searchParams.set('studentId', student.id)
+  url.searchParams.set('studentName', student.fullName)
+  url.searchParams.set('returnUrl', window.location.href)
+  return url.toString()
+}
+
 export function StudentPage({ state, setState, activeSession, publicMode = false }: Props) {
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<Student | null>(null)
   const [busy, setBusy] = useState(false)
-  if (!activeSession) return <main className="student-wrap"><div className="student-box"><h1>Сесія не обрана</h1></div></main>
+  const [desktopUploadPageUrl, setDesktopUploadPageUrl] = useState('')
+
+  useEffect(() => {
+    let disposed = false
+    setDesktopUploadPageUrl('')
+    if (!selected || !window.dekAgent?.getStatus) return
+    window.dekAgent.getStatus().then((status) => {
+      if (disposed) return
+      const base = status.lanUploadUrl || status.uploadUrl
+      if (base) setDesktopUploadPageUrl(buildUploadPageUrl(base, selected))
+    }).catch(() => undefined)
+    return () => { disposed = true }
+  }, [selected])
+
+  if (!activeSession) return <main className="student-wrap"><div className="student-box"><h1>Сесію не обрано</h1></div></main>
 
   const open = canRegister(activeSession)
   const students = state.students
     .filter((s) => s.sessionId === activeSession.id && s.isAllowedToRegister)
     .filter((s) => [s.fullName, s.groupName, s.thesisTitleEdited].join(' ').toLowerCase().includes(query.toLowerCase()))
     .slice(0, 20)
-  const selectedAgentUploadPageUrl = selected ? getAgentUploadPageUrl(state, selected) : undefined
+  const selectedAgentUploadPageUrl = selected ? getAgentUploadPageUrl(state, selected) || desktopUploadPageUrl : undefined
 
   async function handleUpload(file?: File) {
     if (!file || !selected) return
-    const agentUploadPageUrl = getAgentUploadPageUrl(state, selected)
+    const agentUploadPageUrl = getAgentUploadPageUrl(state, selected) || desktopUploadPageUrl
     if (agentUploadPageUrl) {
       window.location.href = agentUploadPageUrl
       return
@@ -38,8 +61,8 @@ export function StudentPage({ state, setState, activeSession, publicMode = false
     <div className="student-box">
       <div className="student-head">
         <h1>Запис на захист</h1>
-        <p>{activeSession.title} · {activeSession.date} · запис {activeSession.registrationOpenFrom}–{activeSession.registrationOpenTo}</p>
-        {publicMode && <small className="role-note">Окремий студентський режим. Адмінка з цієї сторінки недоступна.</small>}
+        <p>{activeSession.title} · {activeSession.date} · запис {activeSession.registrationOpenFrom}-{activeSession.registrationOpenTo}</p>
+        {publicMode && <small className="role-note">Desktop-режим ПК захисту. Адмінка з цієї сторінки недоступна.</small>}
       </div>
       {!open && <div className="closed-box">Запис на захист закрито. Якщо ви не встигли записатися, будь ласка, зверніться до представників комісії.</div>}
       {!selected && <>
@@ -61,7 +84,7 @@ export function StudentPage({ state, setState, activeSession, publicMode = false
         {open ? <div className="upload-box">
           <h3>Щоб завершити запис, обов’язково завантажте презентацію</h3>
           <p>Дозволені формати: PDF, PPTX, PPT, ODP.</p>
-          <p className="hint">PPTX/PPT/ODP мають завантажуватися напряму в Electron Agent на ПК захисту. Якщо Agent недоступний у мережі, система покаже помилку і попросить звернутися до секретаря.</p>
+          <p className="hint">Файл зберігається локально на цьому ПК захисту через Electron Agent. PPTX/PPT/ODP буде автоматично підготовлено до відкриття або запущено напряму через PowerPoint.</p>
           {selectedAgentUploadPageUrl && <p><button type="button" onClick={() => { window.location.href = selectedAgentUploadPageUrl }}>Відкрити завантаження через Electron Agent</button></p>}
           <input type="file" accept=".pdf,.pptx,.ppt,.odp" disabled={busy} onChange={(e) => void handleUpload(e.target.files?.[0])} />
           {busy && <p>Завантаження...</p>}

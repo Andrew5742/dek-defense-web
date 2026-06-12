@@ -60,7 +60,10 @@ export function StudentPage({ state, setState, activeSession, publicMode = false
           {busy && <p>Завантаження...</p>}
           {selected.presentationStatus === 'ready' && <div className="ok-box">Презентація завантажена і готова до відкриття.</div>}
           {selected.presentationStatus === 'conversion_required' && <div className="warn-box">Презентація завантажена. Потрібна конвертація в PDF через Local Defense Agent.</div>}
-          {selected.presentationStatus === 'error' && <div className="closed-box">Презентацію не передано в Electron Agent. Зверніться до секретаря або перевірте, що Agent запущений на ПК захисту.</div>}
+          {selected.presentationStatus === 'error' && <div className="closed-box">
+            Презентацію не передано в Electron Agent. Зверніться до секретаря або перевірте, що Agent запущений на ПК захисту.
+            {selected.notes && <><br /><small>{selected.notes.split('\n').slice(-1)[0]}</small></>}
+          </div>}
         </div> : <div className="closed-box">Запис закрито. Зверніться до секретаря.</div>}
       </div>}
     </div>

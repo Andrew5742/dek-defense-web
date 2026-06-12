@@ -32,6 +32,7 @@
     "files": [
       "src/**/*",
       "package.json",
+      ".env",
       ".env.example"
     ],
     "win": {

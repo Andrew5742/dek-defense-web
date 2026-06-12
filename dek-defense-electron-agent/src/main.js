@@ -1,6 +1,7 @@
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 require('dotenv').config();
 
-const path = require('path');
 const fs = require('fs');
 const { app, BrowserWindow, ipcMain, shell, powerSaveBlocker } = require('electron');
 const { spawn } = require('child_process');
@@ -120,6 +121,21 @@ if ($powerPoint -ne $null) {
   foreach ($show in @($powerPoint.SlideShowWindows)) {
     try { $show.View.Exit() | Out-Null } catch {}
   }
+  Start-Sleep -Milliseconds 250
+  foreach ($presentation in @($powerPoint.Presentations)) {
+    try { $presentation.Saved = -1 } catch {}
+    try { $presentation.Close() | Out-Null } catch {}
+  }
+  try { $powerPoint.Quit() | Out-Null } catch {}
+}
+Start-Sleep -Milliseconds 250
+$remaining = Get-Process -Name POWERPNT -ErrorAction SilentlyContinue
+foreach ($process in @($remaining)) {
+  try {
+    if ($process.MainWindowTitle -eq '' -or $process.MainWindowTitle -match 'PowerPoint|Slide Show|Показ|Презентац') {
+      Stop-Process -Id $process.Id -Force
+    }
+  } catch {}
 }
 `;
     const child = spawn('powershell.exe', [

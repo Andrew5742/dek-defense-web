@@ -226,10 +226,83 @@ function openPowerPointProcessFallback(filePath) {
   });
 }
 
+function focusPowerPointSlideShow() {
+  if (process.platform !== 'win32') return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const script = `
+$ErrorActionPreference = 'SilentlyContinue'
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class Win32Focus {
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+}
+"@
+$SW_SHOWMAXIMIZED = 3
+$HWND_TOPMOST = [IntPtr]::new(-1)
+$HWND_NOTOPMOST = [IntPtr]::new(-2)
+$SWP_NOMOVE = 0x0002
+$SWP_NOSIZE = 0x0001
+$SWP_SHOWWINDOW = 0x0040
+function Focus-Hwnd($hwnd) {
+  if ($hwnd -eq $null -or [int64]$hwnd -eq 0) { return }
+  $ptr = [IntPtr]::new([int64]$hwnd)
+  [Win32Focus]::ShowWindowAsync($ptr, $SW_SHOWMAXIMIZED) | Out-Null
+  [Win32Focus]::SetWindowPos($ptr, $HWND_TOPMOST, 0, 0, 0, 0, $SWP_NOMOVE -bor $SWP_NOSIZE -bor $SWP_SHOWWINDOW) | Out-Null
+  Start-Sleep -Milliseconds 120
+  [Win32Focus]::SetForegroundWindow($ptr) | Out-Null
+  [Win32Focus]::SetWindowPos($ptr, $HWND_NOTOPMOST, 0, 0, 0, 0, $SWP_NOMOVE -bor $SWP_NOSIZE -bor $SWP_SHOWWINDOW) | Out-Null
+}
+$powerPoint = [Runtime.InteropServices.Marshal]::GetActiveObject('PowerPoint.Application')
+if ($powerPoint -ne $null) {
+  foreach ($show in @($powerPoint.SlideShowWindows)) {
+    try { Focus-Hwnd $show.HWND } catch {}
+  }
+  try { $powerPoint.Activate() | Out-Null } catch {}
+}
+`;
+    const child = spawn('powershell.exe', [
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-Command',
+      script
+    ], { windowsHide: true });
+    child.on('close', () => resolve(true));
+    child.on('error', () => resolve(false));
+  });
+}
+
 function openPowerPointFullscreen(filePath) {
   return new Promise((resolve, reject) => {
     const script = `
 $ErrorActionPreference = 'Stop'
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class Win32Focus {
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+}
+"@
+$SW_SHOWMAXIMIZED = 3
+$HWND_TOPMOST = [IntPtr]::new(-1)
+$HWND_NOTOPMOST = [IntPtr]::new(-2)
+$SWP_NOMOVE = 0x0002
+$SWP_NOSIZE = 0x0001
+$SWP_SHOWWINDOW = 0x0040
+function Focus-Hwnd($hwnd) {
+  if ($hwnd -eq $null -or [int64]$hwnd -eq 0) { return }
+  $ptr = [IntPtr]::new([int64]$hwnd)
+  [Win32Focus]::ShowWindowAsync($ptr, $SW_SHOWMAXIMIZED) | Out-Null
+  [Win32Focus]::SetWindowPos($ptr, $HWND_TOPMOST, 0, 0, 0, 0, $SWP_NOMOVE -bor $SWP_NOSIZE -bor $SWP_SHOWWINDOW) | Out-Null
+  Start-Sleep -Milliseconds 120
+  [Win32Focus]::SetForegroundWindow($ptr) | Out-Null
+  [Win32Focus]::SetWindowPos($ptr, $HWND_NOTOPMOST, 0, 0, 0, 0, $SWP_NOMOVE -bor $SWP_NOSIZE -bor $SWP_SHOWWINDOW) | Out-Null
+}
 $filePath = ${psQuote(filePath)}
 $powerPoint = New-Object -ComObject PowerPoint.Application
 $powerPoint.Visible = -1
@@ -237,6 +310,20 @@ $presentation = $powerPoint.Presentations.Open($filePath, -1, 0, -1)
 try { $presentation.SlideShowSettings.ShowPresenterView = 0 } catch {}
 $presentation.SlideShowSettings.ShowType = 1
 $presentation.SlideShowSettings.Run() | Out-Null
+$slideShow = $null
+for ($i = 0; $i -lt 30; $i++) {
+  try {
+    if ($presentation.SlideShowWindow -ne $null) {
+      $slideShow = $presentation.SlideShowWindow
+      break
+    }
+  } catch {}
+  Start-Sleep -Milliseconds 100
+}
+if ($slideShow -ne $null) {
+  try { Focus-Hwnd $slideShow.HWND } catch {}
+}
+try { $powerPoint.Activate() | Out-Null } catch {}
 `;
     const child = spawn('powershell.exe', [
       '-NoProfile',
@@ -256,6 +343,8 @@ $presentation.SlideShowSettings.Run() | Out-Null
       }
       try {
         await openPowerPointProcessFallback(filePath);
+        await new Promise((resolve) => setTimeout(resolve, 900));
+        await focusPowerPointSlideShow();
         resolve(true);
         return;
       } catch (fallbackError) {

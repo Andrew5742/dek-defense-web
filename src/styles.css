@@ -117,6 +117,7 @@ h3 { margin: 0 0 10px; }
 
 .role-note { display: block; margin-top: 6px; color: #374151; }
 .hint { color: #374151; background: #f9fafb; border: 1px solid var(--border); padding: 8px; }
+.inline-hint { display: inline-block; padding: 5px 8px; }
 .warn-box { border: 1px solid #f59e0b; background: #fffbeb; color: #78350f; padding: 10px; margin-top: 10px; }
 .ok-box { border: 1px solid #10b981; background: #ecfdf5; color: #064e3b; padding: 10px; margin-top: 10px; }
 

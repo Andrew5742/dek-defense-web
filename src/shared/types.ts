@@ -154,6 +154,10 @@ export interface Station {
 export interface ProtocolRow {
   studentId: string
   order: number
+  groupName?: string
+  studentName?: string
+  thesisTitle?: string
+  supervisor?: string
   pagesCount?: string
   drawingsCount?: string
   supervisorReview?: string
@@ -170,6 +174,7 @@ export interface ProtocolSnapshot {
   title: string
   date: string
   groupName?: string
+  groupKey?: string
   rows: ProtocolRow[]
   defaultValues: Partial<ProtocolRow>
   createdAt: string

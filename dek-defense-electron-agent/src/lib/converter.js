@@ -6,10 +6,11 @@ const { ensureDir } = require('./paths');
 function getLibreOfficeCandidates() {
   if (process.platform === 'win32') {
     return [
+      process.env.LIBREOFFICE_PATH,
       'soffice.exe',
       'C:\\Program Files\\LibreOffice\\program\\soffice.exe',
       'C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe'
-    ];
+    ].filter(Boolean);
   }
   if (process.platform === 'darwin') {
     return [

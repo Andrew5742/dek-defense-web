@@ -11,7 +11,8 @@ contextBridge.exposeInMainWorld('dekAgent', {
       'agent-error',
       'station-status',
       'command-running',
-      'presentation-uploaded'
+      'presentation-uploaded',
+      'presentation-converted'
     ];
     if (!allowed.includes(channel)) return;
     ipcRenderer.on(channel, (_, payload) => callback(payload));

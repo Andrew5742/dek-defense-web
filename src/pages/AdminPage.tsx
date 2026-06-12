@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
-import type { AppState, DefenseSession, ImportReview, ProtocolSnapshot, Student } from '../shared/types'
-import { downloadTextFile, formatLocalDateTime, nowIso, uid } from '../shared/utils'
+import type { AppState, DefenseSession, ImportReview, ProtocolRow, ProtocolSnapshot, Student } from '../shared/types'
+import { downloadTextFile, formatLocalDateTime, nowIso } from '../shared/utils'
 import { addManualStudent, addToQueue, confirmImportReview, createSession, removeFromQueue, removeSession, removeStudent, reorderQueue, requestOpenPresentation, requestOpenZoom, requestShowDisplay, requestStartDefenses, saveImportReview, saveProtocol, setDefenseStatus, setRegistrationLock, updateImportReview, updateStudent } from '../services/actions'
 import { importDocx, importFromPastedText } from '../services/importService'
 import { isFirebaseEnabled } from '../services/firebaseAdapter'
@@ -241,6 +241,7 @@ function QueuePanel({ state, setState, session, onEdit }: { state: AppState; set
               <button onClick={() => setState(requestOpenPresentation(state, session.id, s.id))}>{(s.defenseFormat || 'offline') === 'online' ? 'Відкрити Zoom' : 'Відкрити презу'}</button>
               <button onClick={() => setState(requestShowDisplay(state, session.id))}>Повернути Display</button>
               <button onClick={() => setState(setDefenseStatus(state, s.id, 'defended'))}>Захистився</button>
+              <button onClick={() => setState(removeFromQueue(setDefenseStatus(state, s.id, 'defended'), session.id, s.id))}>Захистився + прибрати</button>
               <button onClick={() => setState(setDefenseStatus(state, s.id, 'absent'))}>Відсутній</button>
               <button onClick={() => {
                 const note = prompt('Опишіть проблему захисту')?.trim()
@@ -272,38 +273,164 @@ function QueuePanel({ state, setState, session, onEdit }: { state: AppState; set
   </div>
 }
 
+function normalizeProtocolGroup(value: string): string {
+  return value.trim().toLocaleUpperCase('uk-UA').replace(/\s+/g, '')
+}
+
+function protocolGroupKey(groupName: string): string {
+  const value = normalizeProtocolGroup(groupName)
+  if (/^(ІСТС|ІСТ|ICTS|ICT|ISTS|IST)/.test(value)) return 'ist'
+  if (/^(КІС|KIS)/.test(value)) return 'kis'
+  if (/^(КІ|KI)/.test(value)) return 'ki'
+  return value ? `other_${value.replace(/[^A-ZА-ЯІЇЄҐ0-9]+/g, '_')}` : 'other'
+}
+
+function protocolGroupLabel(groupKey: string, students: Student[]): string {
+  if (groupKey === 'ist') return 'ІСТ / ІСТс'
+  if (groupKey === 'ki') return 'КІ'
+  if (groupKey === 'kis') return 'КІс'
+  return students[0]?.groupName || 'Інша група'
+}
+
+function buildProtocol(session: DefenseSession, groupKey: string, groupLabel: string, students: Student[], defaults: Partial<ProtocolRow>, existing?: ProtocolSnapshot): ProtocolSnapshot {
+  const savedRows = new Map((existing?.rows || []).map((row) => [row.studentId, row]))
+  const rows = students.map((student, idx) => {
+    const saved = savedRows.get(student.id)
+    return {
+      studentId: student.id,
+      order: saved?.order || idx + 1,
+      groupName: saved?.groupName || student.groupName,
+      studentName: saved?.studentName || student.fullName,
+      thesisTitle: saved?.thesisTitle || student.thesisTitleEdited,
+      supervisor: saved?.supervisor || student.supervisorEdited,
+      pagesCount: saved?.pagesCount ?? defaults.pagesCount,
+      drawingsCount: saved?.drawingsCount ?? defaults.drawingsCount,
+      supervisorReview: saved?.supervisorReview ?? defaults.supervisorReview,
+      reviewerGrade: saved?.reviewerGrade ?? defaults.reviewerGrade,
+      commissionMembersCount: saved?.commissionMembersCount ?? defaults.commissionMembersCount,
+      questions: saved?.questions ?? defaults.questions ?? '',
+      commissionDecision: saved?.commissionDecision ?? defaults.commissionDecision,
+      diplomaType: saved?.diplomaType ?? defaults.diplomaType
+    }
+  }).sort((a, b) => a.order - b.order)
+  const now = nowIso()
+  return {
+    id: `protocol_${session.id}_${groupKey}`,
+    sessionId: session.id,
+    title: `Протокол ${groupLabel} ${session.date}`,
+    date: session.date,
+    groupName: groupLabel,
+    groupKey,
+    rows,
+    defaultValues: defaults,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now
+  }
+}
+
 function ProtocolPanel({ state, setState, session }: { state: AppState; setState: (s: AppState) => void; session: DefenseSession }) {
-  const queueStudents = state.queue.filter((q) => q.sessionId === session.id).sort((a,b)=>a.position-b.position).map((q) => state.students.find((s) => s.id === q.studentId)).filter(Boolean) as Student[]
-  const selected = queueStudents.slice(0, 12)
-  const [defaults, setDefaults] = useState({ pagesCount: '60', drawingsCount: '3', supervisorReview: 'робота виконана на задовільному рівні', reviewerGrade: 'добре', commissionMembersCount: '5', commissionDecision: 'бакалавра з інформаційних систем та технологій', diplomaType: 'звичайного зразка' })
-  const protocol = useMemo<ProtocolSnapshot>(() => ({
-    id: uid('protocol'), sessionId: session.id, title: `Протокол ${session.date}`, date: session.date,
-    rows: selected.map((s, idx) => ({ studentId: s.id, order: idx + 1, ...defaults })), defaultValues: defaults,
-    createdAt: nowIso(), updatedAt: nowIso()
-  }), [session.id, session.date, selected.length, JSON.stringify(defaults)])
+  const [defaults, setDefaults] = useState<Partial<ProtocolRow>>({ pagesCount: '60', drawingsCount: '3', supervisorReview: 'робота виконана на задовільному рівні', reviewerGrade: 'добре', commissionMembersCount: '5', commissionDecision: 'бакалавра з інформаційних систем та технологій', diplomaType: 'звичайного зразка', questions: '' })
+  const [selectedGroupKey, setSelectedGroupKey] = useState('')
+  const [drafts, setDrafts] = useState<Record<string, ProtocolSnapshot>>({})
+  const studentsById = useMemo(() => new Map(state.students.map((s) => [s.id, s])), [state.students])
+  const groupedStudents = useMemo(() => {
+    const queueOrder = new Map(state.queue.filter((q) => q.sessionId === session.id).map((q) => [q.studentId, q.position]))
+    const ordered = state.students
+      .filter((s) => s.sessionId === session.id)
+      .sort((a, b) => {
+        const aq = queueOrder.get(a.id) ?? 9999
+        const bq = queueOrder.get(b.id) ?? 9999
+        return aq - bq || a.groupName.localeCompare(b.groupName, 'uk') || a.fullName.localeCompare(b.fullName, 'uk')
+      })
+    return ordered.reduce<Record<string, Student[]>>((acc, student) => {
+      const key = protocolGroupKey(student.groupName)
+      acc[key] = [...(acc[key] || []), student]
+      return acc
+    }, {})
+  }, [state.students, state.queue, session.id])
+  const groupKeys = Object.keys(groupedStudents)
+  const currentGroupKey = groupKeys.includes(selectedGroupKey) ? selectedGroupKey : groupKeys[0] || 'other'
+  const currentStudents = groupedStudents[currentGroupKey] || []
+  const groupLabel = protocolGroupLabel(currentGroupKey, currentStudents)
+  const savedProtocol = state.protocols.find((p) => p.sessionId === session.id && (p.groupKey === currentGroupKey || (!p.groupKey && p.groupName === groupLabel)))
+  const protocol = useMemo(() => buildProtocol(session, currentGroupKey, groupLabel, currentStudents, defaults, drafts[currentGroupKey] || savedProtocol), [session, currentGroupKey, groupLabel, currentStudents, defaults, drafts, savedProtocol])
+
+  function updateDraft(next: ProtocolSnapshot) {
+    setDrafts((prev) => ({ ...prev, [currentGroupKey]: { ...next, updatedAt: nowIso() } }))
+  }
+
+  function updateRow(studentId: string, patch: Partial<ProtocolRow>) {
+    updateDraft({
+      ...protocol,
+      rows: protocol.rows.map((row) => row.studentId === studentId ? { ...row, ...patch } : row)
+    })
+  }
+
+  function applyDefaultsToRows() {
+    updateDraft({
+      ...protocol,
+      defaultValues: defaults,
+      rows: protocol.rows.map((row) => ({ ...row, ...defaults }))
+    })
+  }
 
   function printProtocol() {
     const html = document.getElementById('protocol-preview')?.innerHTML || ''
     const w = window.open('', '_blank')
     if (!w) return
-    w.document.write(`<html><head><title>Протокол</title><style>body{font-family:Times New Roman,serif;font-size:11px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #000;padding:3px;vertical-align:top}.center{text-align:center}</style></head><body>${html}</body></html>`)
+    w.document.write(`<html><head><title>${protocol.title}</title><style>body{font-family:Times New Roman,serif;font-size:11px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #000;padding:3px;vertical-align:top}.center{text-align:center}</style></head><body>${html}</body></html>`)
     w.document.close(); w.print()
   }
 
   return <div>
     <h1>Протокол</h1>
     <div className="panel">
-      <h2>Автозаповнення колонок</h2>
-      <div className="form-grid">
-        {Object.entries(defaults).map(([k, v]) => <label key={k}>{k}<input value={v} onChange={(e) => setDefaults({ ...defaults, [k]: e.target.value })} /></label>)}
+      <h2>Окремі протоколи за групами</h2>
+      <div className="toolbar">
+        {groupKeys.map((key) => <button key={key} className={key === currentGroupKey ? 'active' : ''} onClick={() => setSelectedGroupKey(key)}>{protocolGroupLabel(key, groupedStudents[key])} ({groupedStudents[key].length})</button>)}
       </div>
-      <div className="toolbar"><button onClick={() => setState(saveProtocol(state, protocol))}>Зберегти snapshot</button><button onClick={printProtocol}>Друк / PDF</button></div>
+      <p className="hint">ІСТ та ІСТс формуються в один протокол. КІ і КІс формуються окремо. Студенти не зникають із протоколу після прибирання з черги.</p>
+    </div>
+    <div className="panel">
+      <h2>Значення за замовчуванням</h2>
+      <div className="form-grid">
+        {Object.entries(defaults).map(([k, v]) => <label key={k}>{k}<input value={String(v || '')} onChange={(e) => setDefaults({ ...defaults, [k]: e.target.value })} /></label>)}
+      </div>
+      <div className="toolbar">
+        <button onClick={applyDefaultsToRows}>Застосувати до рядків</button>
+        <button className="primary" onClick={() => setState(saveProtocol(state, { ...protocol, updatedAt: nowIso() }))}>Зберегти протокол</button>
+        <button onClick={printProtocol}>Друк / PDF</button>
+      </div>
+    </div>
+    <div className="panel">
+      <h2>Редагування протоколу: {groupLabel}</h2>
+      <table className="compact">
+        <thead><tr><th>№</th><th>Група</th><th>ПІБ</th><th>Тема</th><th>Керівник</th><th>Стор.</th><th>Арк.</th><th>Відгук</th><th>Оц. рец.</th><th>К-ть</th><th>Питання</th><th>Рішення</th><th>Диплом</th></tr></thead>
+        <tbody>{protocol.rows.map((row) => {
+          const student = studentsById.get(row.studentId)
+          return <tr key={row.studentId}>
+            <td><input className="tiny-input" value={row.order} onChange={(e) => updateRow(row.studentId, { order: Number(e.target.value) || row.order })} /></td>
+            <td><input value={row.groupName || student?.groupName || ''} onChange={(e) => updateRow(row.studentId, { groupName: e.target.value })} /></td>
+            <td><textarea value={row.studentName || student?.fullName || ''} onChange={(e) => updateRow(row.studentId, { studentName: e.target.value })} /></td>
+            <td><textarea value={row.thesisTitle || student?.thesisTitleEdited || ''} onChange={(e) => updateRow(row.studentId, { thesisTitle: e.target.value })} /></td>
+            <td><textarea value={row.supervisor || student?.supervisorEdited || ''} onChange={(e) => updateRow(row.studentId, { supervisor: e.target.value })} /></td>
+            <td><input className="tiny-input" value={row.pagesCount || ''} onChange={(e) => updateRow(row.studentId, { pagesCount: e.target.value })} /></td>
+            <td><input className="tiny-input" value={row.drawingsCount || ''} onChange={(e) => updateRow(row.studentId, { drawingsCount: e.target.value })} /></td>
+            <td><textarea value={row.supervisorReview || ''} onChange={(e) => updateRow(row.studentId, { supervisorReview: e.target.value })} /></td>
+            <td><input value={row.reviewerGrade || ''} onChange={(e) => updateRow(row.studentId, { reviewerGrade: e.target.value })} /></td>
+            <td><input className="tiny-input" value={row.commissionMembersCount || ''} onChange={(e) => updateRow(row.studentId, { commissionMembersCount: e.target.value })} /></td>
+            <td><textarea value={row.questions || ''} onChange={(e) => updateRow(row.studentId, { questions: e.target.value })} /></td>
+            <td><textarea value={row.commissionDecision || ''} onChange={(e) => updateRow(row.studentId, { commissionDecision: e.target.value })} /></td>
+            <td><input value={row.diplomaType || ''} onChange={(e) => updateRow(row.studentId, { diplomaType: e.target.value })} /></td>
+          </tr>
+        })}</tbody>
+      </table>
     </div>
     <div className="panel protocol" id="protocol-preview">
       <h3 className="center">ПРОТОКОЛ № ___ від “___” __________ 20__ р.</h3>
-      <p className="center">по розгляду дипломних проєктів / робіт. Дата: {session.date}</p>
-      <table><thead><tr><th>№</th><th>ПІБ студента</th><th>Тема дипломного проєкту / роботи</th><th>Керівник</th><th>Стор.</th><th>Арк.</th><th>Відгук</th><th>Оц. рец.</th><th>К-ть членів</th><th>Питання</th><th>Рішення</th><th>Диплом</th></tr></thead>
-      <tbody>{selected.map((s, idx) => <tr key={s.id}><td>{idx+1}</td><td>{s.fullName}</td><td>{s.thesisTitleEdited}</td><td>{s.supervisorEdited}</td><td>{defaults.pagesCount}</td><td>{defaults.drawingsCount}</td><td>{defaults.supervisorReview}</td><td>{defaults.reviewerGrade}</td><td>{defaults.commissionMembersCount}</td><td></td><td>{defaults.commissionDecision}</td><td>{defaults.diplomaType}</td></tr>)}</tbody></table>
+      <p className="center">по розгляду дипломних проєктів / робіт. Дата: {session.date}. Група: {groupLabel}</p>
+      <table><thead><tr><th>№</th><th>ПІБ студента</th><th>Група</th><th>Тема дипломного проєкту / роботи</th><th>Керівник</th><th>Стор.</th><th>Арк.</th><th>Відгук</th><th>Оц. рец.</th><th>К-ть членів</th><th>Питання</th><th>Рішення</th><th>Диплом</th></tr></thead>
+      <tbody>{protocol.rows.map((row, idx) => <tr key={row.studentId}><td>{row.order || idx + 1}</td><td>{row.studentName}</td><td>{row.groupName}</td><td>{row.thesisTitle}</td><td>{row.supervisor}</td><td>{row.pagesCount}</td><td>{row.drawingsCount}</td><td>{row.supervisorReview}</td><td>{row.reviewerGrade}</td><td>{row.commissionMembersCount}</td><td>{row.questions}</td><td>{row.commissionDecision}</td><td>{row.diplomaType}</td></tr>)}</tbody></table>
     </div>
   </div>
 }

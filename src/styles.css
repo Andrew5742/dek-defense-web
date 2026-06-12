@@ -56,6 +56,7 @@ h3 { margin: 0 0 10px; }
 .paste { width: 100%; min-height: 140px; margin: 10px 0; }
 .compact th, .compact td { padding: 5px; }
 .compact input, .compact textarea { width: 100%; min-width: 120px; }
+.compact .tiny-input { min-width: 52px; max-width: 72px; }
 .search { width: 100%; margin-bottom: 12px; }
 .topic { max-width: 420px; }
 .actions { display: flex; gap: 5px; flex-wrap: wrap; min-width: 330px; }

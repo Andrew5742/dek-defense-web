@@ -22,7 +22,10 @@ export function addEvent(state: AppState, event: Omit<EventLogItem, 'id' | 'crea
 }
 
 function targetStationId(state: AppState, session?: DefenseSession): string {
-  return session?.stationId || state.stations.find((station) => station.online)?.id || state.stations[0]?.id || 'station_local_demo'
+  const onlineStation = state.stations.find((station) => station.online)
+  if (onlineStation?.id) return onlineStation.id
+  if (session?.stationId && session.stationId !== 'station_local_demo') return session.stationId
+  return state.stations[0]?.id || 'station_local_demo'
 }
 
 function getOnlineUploadUrl(state: AppState): string | undefined {
@@ -83,13 +86,16 @@ export function removeSession(state: AppState, sessionId: string): AppState {
 }
 
 function requestCommand(state: AppState, command: Command, event: Omit<EventLogItem, 'id' | 'createdAt'>): AppState {
+  const commandFreshUntilMs = 2 * 60 * 1000
+  const now = Date.now()
   const existing = state.commands.find((item) =>
     item.sessionId === command.sessionId &&
     item.type === command.type &&
     item.status !== 'done' &&
     item.status !== 'error' &&
     (item.studentId || '') === (command.studentId || '') &&
-    (item.targetStationId || '') === (command.targetStationId || '')
+    (item.targetStationId || '') === (command.targetStationId || '') &&
+    now - Date.parse(item.createdAt) < commandFreshUntilMs
   )
   if (existing) {
     return addEvent(state, {
@@ -368,6 +374,7 @@ export async function uploadPresentation(state: AppState, studentId: string, fil
       const payload = await response.json().catch(() => ({}))
       if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `Agent upload failed: ${response.status}`)
       const uploaded = payload?.presentation || {}
+      const agentStatus = uploaded.status || (ext === 'pdf' ? 'ready' : 'converting')
       const meta: PresentationMeta = {
         id: `${student.sessionId}_${studentId}`,
         sessionId: student.sessionId,
@@ -378,10 +385,11 @@ export async function uploadPresentation(state: AppState, studentId: string, fil
         mimeType: file.type || 'application/octet-stream',
         extension: uploaded.format || ext,
         version,
-        status: ext === 'pdf' ? 'ready' : 'conversion_required',
+        status: agentStatus,
         uploadedAt: uploaded.uploadedAt || nowIso(),
         localOnly: true,
-        convertedPdfReady: ext === 'pdf'
+        convertedPdfReady: uploaded.convertedPdfReady === true,
+        error: uploaded.errorMessage || uploaded.error
       }
       let next: AppState = {
         ...state,

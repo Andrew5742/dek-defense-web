@@ -88,6 +88,12 @@ class FirestoreAgent {
   }
 
   async handleCommand(commandId, command) {
+    if (this.isStaleCommand(command)) {
+      await this.setCommandStatus(commandId, 'error', { errorMessage: 'Stale command ignored by local agent' });
+      await this.addEvent('COMMAND_STALE_IGNORED', { commandId, commandType: command.type, sessionId: command.sessionId });
+      return;
+    }
+
     await this.setCommandStatus(commandId, 'running');
     this.sendToRenderer('command-running', { commandId, command });
 
@@ -127,6 +133,16 @@ class FirestoreAgent {
     }
   }
 
+  isStaleCommand(command) {
+    const createdAt = command.createdAt;
+    let createdMs = 0;
+    if (createdAt?.toDate) createdMs = createdAt.toDate().getTime();
+    else if (createdAt instanceof Date) createdMs = createdAt.getTime();
+    else if (typeof createdAt === 'string') createdMs = Date.parse(createdAt);
+    if (!Number.isFinite(createdMs) || createdMs <= 0) return false;
+    return Date.now() - createdMs > 5 * 60 * 1000;
+  }
+
   async updatePresentation(sessionId, studentId, extra) {
     const { doc, setDoc, serverTimestamp } = this.firebase;
     const id = `${sessionId}_${studentId}`;
@@ -140,6 +156,7 @@ class FirestoreAgent {
   }
 
   async onUploaded(payload) {
+    const isPdf = payload.format === 'pdf';
     await this.updatePresentation(payload.sessionId, payload.studentId, {
       fileName: payload.fileName,
       storedName: payload.storedName,
@@ -147,8 +164,9 @@ class FirestoreAgent {
       size: payload.size,
       localPathHint: payload.storedName,
       localOnly: true,
-      status: payload.format === 'pdf' ? 'ready' : 'conversion_required',
-      uploadedAt: this.firebase.serverTimestamp()
+      status: isPdf ? 'ready' : 'converting',
+      uploadedAt: this.firebase.serverTimestamp(),
+      convertedPdfReady: isPdf
     });
     await this.addEvent('PRESENTATION_UPLOADED_LOCAL', {
       sessionId: payload.sessionId,
@@ -158,6 +176,43 @@ class FirestoreAgent {
       size: payload.size
     });
     this.sendToRenderer('presentation-uploaded', payload);
+    if (isPdf) {
+      return { status: 'ready', convertedPdfReady: true };
+    }
+
+    if (!isPdf) {
+      try {
+        const pdfPath = await this.preparePresentation(payload.sessionId, payload.studentId);
+        await this.updatePresentation(payload.sessionId, payload.studentId, {
+          status: 'ready',
+          convertedPdfReady: true,
+          convertedPdfName: path.basename(pdfPath),
+          convertedAt: this.firebase.serverTimestamp()
+        });
+        await this.addEvent('PRESENTATION_CONVERTED_LOCAL', {
+          sessionId: payload.sessionId,
+          studentId: payload.studentId,
+          fileName: payload.fileName,
+          convertedPdfName: path.basename(pdfPath)
+        });
+        this.sendToRenderer('presentation-converted', { ...payload, convertedPdfName: path.basename(pdfPath) });
+        return { status: 'ready', convertedPdfReady: true, convertedPdfName: path.basename(pdfPath) };
+      } catch (error) {
+        await this.updatePresentation(payload.sessionId, payload.studentId, {
+          status: 'error',
+          convertedPdfReady: false,
+          errorMessage: error.message
+        });
+        await this.addEvent('PRESENTATION_CONVERSION_ERROR', {
+          sessionId: payload.sessionId,
+          studentId: payload.studentId,
+          fileName: payload.fileName,
+          errorMessage: error.message
+        });
+        this.sendToRenderer('agent-error', { error: error.message });
+        return { status: 'error', convertedPdfReady: false, errorMessage: error.message };
+      }
+    }
   }
 
   async preparePresentation(sessionId, studentId) {
@@ -169,19 +224,25 @@ class FirestoreAgent {
 
     if (!files.length) throw new Error('Локальний файл презентації не знайдено на ПК захисту');
 
-    const latestPdf = files.find((item) => path.extname(item.name).toLowerCase() === '.pdf');
-    const latestOriginal = files.find((item) => ['.pptx', '.ppt', '.odp', '.pdf'].includes(path.extname(item.name).toLowerCase()));
-    const source = latestPdf || latestOriginal;
+    const source = files.find((item) => ['.pptx', '.ppt', '.odp', '.pdf'].includes(path.extname(item.name).toLowerCase()));
     if (!source) throw new Error('Не знайдено підтримуваний файл презентації');
 
-    if (path.extname(source.name).toLowerCase() === '.pdf') return source.full;
+    if (path.extname(source.name).toLowerCase() === '.pdf') {
+      await this.updatePresentation(sessionId, studentId, {
+        status: 'ready',
+        convertedPdfReady: true,
+        convertedPdfName: source.name
+      });
+      return source.full;
+    }
 
     const convertedDir = ensureDir(path.join(dir, 'converted'));
-    await this.updatePresentation(sessionId, studentId, { status: 'converting' });
+    await this.updatePresentation(sessionId, studentId, { status: 'converting', convertedPdfReady: false });
     const pdfPath = await convertToPdf(source.full, convertedDir);
     await this.updatePresentation(sessionId, studentId, {
       status: 'ready',
       convertedPdfName: path.basename(pdfPath),
+      convertedPdfReady: true,
       convertedAt: this.firebase.serverTimestamp()
     });
     return pdfPath;

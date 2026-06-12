@@ -71,8 +71,8 @@ function startUploadServer({ port, onUploaded }) {
         size: file.size,
         uploadedAt: new Date().toISOString()
       };
-      await onUploaded?.(payload);
-      res.json({ ok: true, presentation: { ...payload, localPath: undefined } });
+      const processed = await onUploaded?.(payload);
+      res.json({ ok: true, presentation: { ...payload, ...(processed || {}), localPath: undefined } });
     } catch (error) {
       res.status(500).json({ ok: false, error: error.message });
     }

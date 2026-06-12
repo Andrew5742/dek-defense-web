@@ -379,7 +379,13 @@ async function openPresentationFullscreen(prepared, command = {}) {
     openPdfFullscreen(prepared.path, command);
     return;
   }
-  await openPowerPointFullscreen(prepared.path);
+  try {
+    await openPowerPointProcessFallback(prepared.path);
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    await focusPowerPointSlideShow();
+  } catch {
+    await openPowerPointFullscreen(prepared.path);
+  }
 }
 
 async function openUploadPage(command = {}) {

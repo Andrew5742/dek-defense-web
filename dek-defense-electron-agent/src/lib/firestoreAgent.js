@@ -352,6 +352,7 @@ class FirestoreAgent {
     const files = fs.readdirSync(dir)
       .map((name) => ({ name, full: path.join(dir, name), stat: fs.statSync(path.join(dir, name)) }))
       .filter((item) => item.stat.isFile())
+      .filter((item) => !item.name.startsWith('~$') && !item.name.endsWith('.tmp') && !item.name.endsWith('.crdownload'))
       .sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs);
 
     if (!files.length) throw new Error('Локальний файл презентації не знайдено на ПК захисту');

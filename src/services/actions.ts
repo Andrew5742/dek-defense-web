@@ -75,6 +75,22 @@ export function createSession(state: AppState, input: Partial<DefenseSession>): 
   })
 }
 
+export function updateSession(state: AppState, sessionId: string, patch: Partial<DefenseSession>): AppState {
+  const session = state.sessions.find((s) => s.id === sessionId)
+  if (!session) return state
+  const next = {
+    ...state,
+    sessions: state.sessions.map((s) => (s.id === sessionId ? { ...s, ...patch, id: s.id, updatedAt: nowIso() } : s))
+  }
+  return addEvent(next, {
+    sessionId,
+    type: 'SESSION_UPDATED',
+    actor: 'admin',
+    message: `Оновлено сесію ${patch.title || session.title}`,
+    payload: { sessionId, patch }
+  })
+}
+
 export function removeSession(state: AppState, sessionId: string): AppState {
   const session = state.sessions.find((s) => s.id === sessionId)
   if (!session) return state

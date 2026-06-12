@@ -29,6 +29,7 @@ export type DefenseFormat = 'offline' | 'online'
 
 export type EventType =
   | 'SESSION_CREATED'
+  | 'SESSION_UPDATED'
   | 'SESSION_DELETED'
   | 'IMPORT_REVIEW_CREATED'
   | 'IMPORT_CONFIRMED'
@@ -96,6 +97,11 @@ export interface Student {
   defenseStatus: DefenseStatus
   registeredAt?: string
   queuePosition?: number
+  pagesCount?: string
+  drawingsCount?: string
+  workLevel?: string
+  reviewerGrade?: string
+  projectGrade?: string
   notes?: string
   createdAt: string
   updatedAt: string
@@ -161,8 +167,10 @@ export interface ProtocolRow {
   supervisor?: string
   pagesCount?: string
   drawingsCount?: string
+  workLevel?: string
   supervisorReview?: string
   reviewerGrade?: string
+  projectGrade?: string
   commissionMembersCount?: string
   questions?: string
   commissionDecision?: string

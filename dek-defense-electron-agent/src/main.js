@@ -357,6 +357,7 @@ try { $powerPoint.Activate() | Out-Null } catch {}
 }
 
 async function openPresentationFullscreen(prepared, command = {}) {
+  await closePresentationFullscreen();
   closeDisplayFullscreen();
   if (prepared.kind === 'pdf') {
     openPdfFullscreen(prepared.path, command);

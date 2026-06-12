@@ -147,6 +147,7 @@ class FirestoreAgent {
       }
 
       if (command.type === 'open_zoom') {
+        await this.closePresentationFullscreen?.();
         this.closeDisplayFullscreen?.();
         await shell.openExternal(command.zoomUrl || this.zoomUrl || 'zoommtg://zoom.us/join');
         await this.setCommandStatus(commandId, 'done');

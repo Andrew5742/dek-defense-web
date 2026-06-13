@@ -30,6 +30,10 @@ const WEB_APP_URL = process.env.WEB_APP_URL || 'https://andrew5742.github.io/dek
 
 store.set('stationId', STATION_ID);
 
+function getAppIconPath() {
+  return path.join(__dirname, '..', 'build', process.platform === 'win32' ? 'icon.ico' : 'icon.png');
+}
+
 function sendToRenderer(channel, payload) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(channel, payload);
@@ -44,6 +48,7 @@ async function createMainWindow() {
     minHeight: 640,
     autoHideMenuBar: true,
     title: 'DEK Defense Station',
+    icon: getAppIconPath(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -77,6 +82,7 @@ function openDisplayFullscreen(command = {}) {
     frame: false,
     backgroundColor: '#111827',
     alwaysOnTop: true,
+    icon: getAppIconPath(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -167,6 +173,7 @@ function openPdfFullscreen(pdfPath, command = {}) {
     frame: false,
     backgroundColor: '#000000',
     alwaysOnTop: true,
+    icon: getAppIconPath(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

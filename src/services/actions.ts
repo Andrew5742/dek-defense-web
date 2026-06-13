@@ -22,10 +22,19 @@ export function addEvent(state: AppState, event: Omit<EventLogItem, 'id' | 'crea
 }
 
 function targetStationId(state: AppState, session?: DefenseSession): string {
-  const onlineStation = state.stations.find((station) => station.online)
-  if (onlineStation?.id) return onlineStation.id
+  const now = Date.now()
+  const recentStations = state.stations
+    .filter((station) => {
+      const heartbeat = Date.parse(station.lastHeartbeat || '')
+      return station.online && Number.isFinite(heartbeat) && now - heartbeat < 45_000
+    })
+    .sort((a, b) => Date.parse(b.lastHeartbeat || '') - Date.parse(a.lastHeartbeat || ''))
+  const sessionStation = recentStations.find((station) => station.id === session?.stationId)
+  if (sessionStation?.id) return sessionStation.id
+  if (recentStations[0]?.id) return recentStations[0].id
   if (session?.stationId && session.stationId !== 'station_local_demo') return session.stationId
-  return state.stations[0]?.id || 'station_local_demo'
+  const newestStation = [...state.stations].sort((a, b) => Date.parse(b.lastHeartbeat || '') - Date.parse(a.lastHeartbeat || ''))[0]
+  return newestStation?.id || 'station_local_demo'
 }
 
 export function getOnlineUploadUrl(state: AppState): string | undefined {
@@ -649,7 +658,7 @@ export function requestOpenPresentation(state: AppState, sessionId: string, stud
     createdAt: nowIso(),
     updatedAt: nowIso()
   }
-  return requestCommand(state, command, {
+  return requestFreshCommand(state, command, {
     sessionId,
     type: type === 'open_zoom' ? 'ZOOM_OPEN_REQUESTED' : 'PRESENTATION_OPEN_REQUESTED',
     actor: 'admin',
@@ -704,7 +713,7 @@ export function requestOpenUploadPage(state: AppState, sessionId: string, studen
     createdAt: nowIso(),
     updatedAt: nowIso()
   }
-  return requestCommand(state, command, {
+  return requestFreshCommand(state, command, {
     sessionId,
     type: 'UPLOAD_PAGE_OPEN_REQUESTED',
     actor: 'admin',
@@ -724,7 +733,7 @@ export function requestStartDefenses(state: AppState, sessionId: string): AppSta
     createdAt: nowIso(),
     updatedAt: nowIso()
   }
-  return requestCommand(state, command, {
+  return requestFreshCommand(state, command, {
     sessionId,
     type: 'START_DEFENSES_REQUESTED',
     actor: 'admin',
@@ -744,7 +753,7 @@ export function requestShowDisplay(state: AppState, sessionId: string): AppState
     createdAt: nowIso(),
     updatedAt: nowIso()
   }
-  return requestCommand(state, command, {
+  return requestFreshCommand(state, command, {
     sessionId,
     type: 'DISPLAY_STARTED',
     actor: 'admin',

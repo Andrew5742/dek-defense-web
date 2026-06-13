@@ -90,7 +90,11 @@ h3 { margin: 0 0 10px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 .student-wrap { min-height: 100vh; background: #f3f4f6; padding: 40px 16px; }
 .student-box { max-width: 840px; margin: 0 auto; background: #fff; border: 1px solid var(--border); padding: 24px; }
-.student-head { border-bottom: 1px solid var(--border); margin-bottom: 18px; }
+.student-head { border-bottom: 1px solid var(--border); margin-bottom: 18px; display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+.student-instruction { border: 1px solid var(--border); background: #f9fafb; padding: 12px 14px; margin-bottom: 16px; }
+.student-instruction ol { margin: 8px 0 8px 20px; padding: 0; }
+.student-instruction li { margin: 4px 0; }
+.student-instruction p { margin: 8px 0 0; color: #374151; }
 .closed-box { border: 1px solid #fecaca; background: #fef2f2; color: var(--red); padding: 14px; margin-bottom: 16px; }
 .big-search { display: block; font-weight: 700; }
 .big-search input { width: 100%; display: block; margin-top: 8px; font-size: 20px; padding: 12px; }
@@ -100,6 +104,11 @@ h3 { margin: 0 0 10px; }
 .confirm-card { border: 1px solid var(--border); padding: 16px; }
 .upload-box { border: 1px dashed #6b7280; padding: 16px; margin-top: 16px; }
 .upload-box input { width: 100%; }
+.check-row { display: flex; align-items: center; gap: 8px; margin: 12px 0; }
+.check-row input { width: auto; }
+.zoom-help { display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; align-items: center; border: 1px solid var(--border); background: #f9fafb; padding: 10px; margin: 10px 0; }
+.zoom-help img { grid-row: span 4; width: 120px; height: 120px; }
+.zoom-help a { word-break: break-all; }
 .display { min-height: 100vh; background: #111827; color: #fff; display: flex; align-items: center; justify-content: center; padding: 40px; }
 .display-card { width: min(900px, 100%); border: 1px solid #4b5563; padding: 40px; }
 .display-card h1 { font-size: 42px; }

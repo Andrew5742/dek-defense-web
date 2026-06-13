@@ -94,6 +94,8 @@ export interface Student {
   studyForm?: string
   isAllowedToRegister: boolean
   defenseFormat?: DefenseFormat
+  wantsZoomDemo?: boolean
+  hasVideo?: boolean
   registrationStatus: RegistrationStatus
   presentationStatus: PresentationStatus
   defenseStatus: DefenseStatus

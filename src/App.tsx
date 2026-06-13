@@ -12,6 +12,7 @@ type Page = 'admin' | 'student' | 'display' | 'agent'
 
 const ADMIN_AUTH_KEY = 'dek-defense-admin-auth'
 const DISPLAY_LOCK_KEY = 'dek-defense-display-locked'
+const STUDENT_LOCK_KEY = 'dek-defense-student-locked'
 const DISPLAY_EXIT_PASSWORD = '0987Kiis'
 
 function isDesktopDefenseRuntime() {
@@ -163,12 +164,14 @@ export default function App() {
   const [adminAuthed, setAdminAuthed] = useState(() => desktopDefense || localStorage.getItem(ADMIN_AUTH_KEY) === '1')
   const [activeSessionId, setActiveSessionId] = useState<string>('')
   const [displayLocked, setDisplayLocked] = useState(() => desktopDefense && page === 'display' && localStorage.getItem(DISPLAY_LOCK_KEY) === '1')
+  const [studentLocked, setStudentLocked] = useState(() => desktopDefense && page === 'student' && localStorage.getItem(STUDENT_LOCK_KEY) === '1')
   const [showLockOverlay, setShowLockOverlay] = useState(false)
   const repository = firebaseRepository || localRepository
 
   useEffect(() => {
     let disposed = false
     if (page !== 'display') localStorage.removeItem(DISPLAY_LOCK_KEY)
+    if (page !== 'student') localStorage.removeItem(STUDENT_LOCK_KEY)
 
     let timeoutId = 0
     const loadState = Promise.race([
@@ -220,19 +223,19 @@ export default function App() {
 
   useEffect(() => {
     function onFullscreenChange() {
-      if (displayLocked && !document.fullscreenElement) setShowLockOverlay(true)
+      if ((displayLocked || studentLocked) && !document.fullscreenElement) setShowLockOverlay(true)
     }
     document.addEventListener('fullscreenchange', onFullscreenChange)
     return () => document.removeEventListener('fullscreenchange', onFullscreenChange)
-  }, [displayLocked])
+  }, [displayLocked, studentLocked])
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (desktopDefense && page === 'display' && event.key === 'Escape') setShowLockOverlay(true)
+      if (desktopDefense && (page === 'display' || studentLocked) && event.key === 'Escape') setShowLockOverlay(true)
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [desktopDefense, page])
+  }, [desktopDefense, page, studentLocked])
 
   function logoutAdmin() {
     localStorage.removeItem(ADMIN_AUTH_KEY)
@@ -241,7 +244,9 @@ export default function App() {
 
   function exitDisplayMode() {
     localStorage.removeItem(DISPLAY_LOCK_KEY)
+    localStorage.removeItem(STUDENT_LOCK_KEY)
     setDisplayLocked(false)
+    setStudentLocked(false)
     setShowLockOverlay(false)
     setPageRaw('student')
     writeDesktopUrl('student')
@@ -249,12 +254,19 @@ export default function App() {
   }
 
   function setDefensePage(nextPage: Exclude<Page, 'admin'>) {
-    if (displayLocked && nextPage !== 'display') {
+    if ((displayLocked && nextPage !== 'display') || (studentLocked && nextPage !== 'student')) {
       setShowLockOverlay(true)
       return
     }
     setPageRaw(nextPage)
     writeDesktopUrl(nextPage)
+  }
+
+  function startStudentFullscreen() {
+    if (!desktopDefense) return
+    localStorage.setItem(STUDENT_LOCK_KEY, '1')
+    setStudentLocked(true)
+    requestAppFullscreen()
   }
 
   const activeSession = useMemo(
@@ -279,13 +291,13 @@ export default function App() {
   }
 
   const defensePage = page === 'admin' ? 'student' : page
-  const hideHeader = defensePage === 'display'
+  const hideHeader = defensePage === 'display' || studentLocked
 
   return (
     <>
       {!hideHeader && <DefenseHeader page={defensePage} setPage={setDefensePage} activeSessionTitle={activeSession?.title} />}
       {syncError && defensePage !== 'display' && <div className="sync-error">{syncError}. Дані на цьому ПК можуть бути не синхронізовані.</div>}
-      {defensePage === 'student' && <StudentPage state={state} setState={setState} activeSession={activeSession} publicMode />}
+      {defensePage === 'student' && <StudentPage state={state} setState={setState} activeSession={activeSession} publicMode onStartFullscreen={startStudentFullscreen} />}
       {defensePage === 'agent' && <AgentPage state={state} setState={setState} activeSession={activeSession} />}
       {defensePage === 'display' && <DisplayPage state={state} activeSession={activeSession} locked={displayLocked} />}
       {defensePage === 'display' && <button className="display-exit-button" onClick={() => setShowLockOverlay(true)}>Вийти</button>}

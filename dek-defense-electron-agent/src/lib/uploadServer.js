@@ -4,7 +4,8 @@ const path = require('path');
 const { getStudentPresentationDir, safeName } = require('./paths');
 const { getPreferredLocalAddress } = require('./network');
 
-const allowedExt = new Set(['.pdf', '.pptx', '.ppt', '.odp']);
+const allowedPresentationExt = new Set(['.pdf', '.pptx', '.ppt', '.odp']);
+const allowedVideoExt = new Set(['.mp4', '.mov', '.avi', '.mkv', '.webm']);
 
 function normalizeUploadFileName(fileName) {
   const value = String(fileName || 'presentation');
@@ -29,7 +30,9 @@ function readUploadIdentity(req) {
     sessionId: req.body?.sessionId || req.query.sessionId || 'default-session',
     studentId: req.body?.studentId || req.query.studentId || '',
     studentName: req.body?.studentName || req.query.studentName || '',
-    returnUrl: req.body?.returnUrl || req.query.returnUrl || ''
+    returnUrl: req.body?.returnUrl || req.query.returnUrl || '',
+    zoomUrl: req.body?.zoomUrl || req.query.zoomUrl || '',
+    wantsZoomDemo: req.body?.wantsZoomDemo === '1' || req.body?.wantsZoomDemo === 'on' || req.body?.wantsZoomDemo === 'true' || req.query.wantsZoomDemo === '1'
   };
 }
 
@@ -39,6 +42,8 @@ function uploadPageUrl(identity, endpoint = '/upload-page') {
   if (identity.studentId) params.set('studentId', identity.studentId);
   if (identity.studentName) params.set('studentName', identity.studentName);
   if (identity.returnUrl) params.set('returnUrl', identity.returnUrl);
+  if (identity.zoomUrl) params.set('zoomUrl', identity.zoomUrl);
+  if (identity.wantsZoomDemo) params.set('wantsZoomDemo', '1');
   return `${endpoint}?${params.toString()}`;
 }
 
@@ -46,6 +51,15 @@ function renderUploadPage({ identity, error = '', success = false, presentation 
   const fallbackAction = uploadPageUrl(identity, '/upload-page');
   const uploadAction = uploadPageUrl(identity, '/upload');
   const confirmTarget = identity.returnUrl || uploadPageUrl(identity, '/upload-page');
+  const zoomBlock = identity.zoomUrl
+    ? `<div class="zoom-box">
+        <b>Zoom meeting</b>
+        <a href="${escapeHtml(identity.zoomUrl)}">${escapeHtml(identity.zoomUrl)}</a>
+        <button type="button" id="copyZoomBtn">Скопіювати Zoom link</button>
+        <img alt="QR Zoom" src="https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(identity.zoomUrl)}">
+        <small>QR можна відсканувати телефоном і переслати посилання собі в месенджер.</small>
+      </div>`
+    : '';
   const backLink = identity.returnUrl
     ? `<a class="button secondary" href="${escapeHtml(identity.returnUrl)}">Повернутися до запису</a>`
     : '';
@@ -82,6 +96,11 @@ function renderUploadPage({ identity, error = '', success = false, presentation 
     .progress-bar { height: 100%; width: 0%; background: #111827; transition: width .12s linear; }
     .progress-text { margin-top: 8px; color: #334155; }
     .confirm { display: none; margin-top: 12px; }
+    .check-row { display: flex; align-items: center; gap: 8px; margin: 10px 0; }
+    .check-row input { width: auto; margin: 0; }
+    .zoom-box { display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; align-items: center; border: 1px solid #cbd5e1; background: #f8fafc; padding: 10px; margin: 12px 0; }
+    .zoom-box img { grid-row: span 3; width: 120px; height: 120px; }
+    .zoom-box small { color: #475569; }
   </style>
 </head>
 <body>
@@ -99,7 +118,11 @@ function renderUploadPage({ identity, error = '', success = false, presentation 
       <input type="hidden" name="studentId" value="${escapeHtml(identity.studentId)}">
       <input type="hidden" name="studentName" value="${escapeHtml(identity.studentName)}">
       <input type="hidden" name="returnUrl" value="${escapeHtml(identity.returnUrl)}">
+      <input type="hidden" name="zoomUrl" value="${escapeHtml(identity.zoomUrl)}">
       <label><b>Оберіть презентацію</b><input id="presentationInput" name="presentation" type="file" accept=".pdf,.pptx,.ppt,.odp" required></label>
+      <label><b>Відео за потреби</b><input id="videoInput" name="video" type="file" accept=".mp4,.mov,.avi,.mkv,.webm"></label>
+      <label class="check-row"><input id="wantsZoomDemoInput" name="wantsZoomDemo" type="checkbox" value="1"${identity.wantsZoomDemo ? ' checked' : ''}> Бажаю демонструвати в Zoom результати роботи</label>
+      ${zoomBlock}
       <button id="uploadBtn" type="submit">Завантажити в Agent</button>${backLink}
     </form>
     <div id="progressWrap" class="progress-wrap">
@@ -116,6 +139,8 @@ function renderUploadPage({ identity, error = '', success = false, presentation 
     const progressText = document.getElementById('progressText');
     const statusBox = document.getElementById('status');
     const confirmBtn = document.getElementById('confirmBtn');
+    const copyZoomBtn = document.getElementById('copyZoomBtn');
+    if (copyZoomBtn) copyZoomBtn.addEventListener('click', () => navigator.clipboard?.writeText(${JSON.stringify(identity.zoomUrl)}));
     form.addEventListener('submit', (event) => {
       event.preventDefault();
       const data = new FormData(form);
@@ -208,19 +233,22 @@ function startUploadServer({ port, onUploaded }) {
       const originalName = normalizeUploadFileName(file.originalname);
       file.originalname = originalName;
       const ext = path.extname(originalName).toLowerCase();
-      if (!allowedExt.has(ext)) {
-        cb(new Error('Дозволені тільки PDF, PPTX, PPT, ODP'));
+      const allowed = file.fieldname === 'video' ? allowedVideoExt : allowedPresentationExt;
+      if (!allowed.has(ext)) {
+        cb(new Error(file.fieldname === 'video' ? 'Дозволені відео: MP4, MOV, AVI, MKV, WEBM' : 'Дозволені тільки PDF, PPTX, PPT, ODP'));
         return;
       }
       cb(null, true);
     }
   });
+  const uploadFields = upload.fields([{ name: 'presentation', maxCount: 1 }, { name: 'video', maxCount: 1 }]);
 
   function buildUploadPayload(req) {
     const identity = readUploadIdentity(req);
     if (!identity.studentId) throw new Error('studentId is required');
-    const file = req.file;
+    const file = req.files?.presentation?.[0] || req.file;
     if (!file) throw new Error('presentation file is required');
+    const video = req.files?.video?.[0];
     return {
       sessionId: identity.sessionId,
       studentId: identity.studentId,
@@ -229,6 +257,16 @@ function startUploadServer({ port, onUploaded }) {
       localPath: file.path,
       format: path.extname(file.originalname).replace('.', '').toLowerCase(),
       size: file.size,
+      wantsZoomDemo: identity.wantsZoomDemo === true,
+      zoomUrl: identity.zoomUrl,
+      video: video ? {
+        fileName: video.originalname,
+        storedName: path.basename(video.path),
+        localPath: video.path,
+        format: path.extname(video.originalname).replace('.', '').toLowerCase(),
+        size: video.size,
+        uploadedAt: new Date().toISOString()
+      } : null,
       uploadedAt: new Date().toISOString()
     };
   }
@@ -242,7 +280,7 @@ function startUploadServer({ port, onUploaded }) {
   });
 
   app.post('/upload-page', (req, res) => {
-    upload.single('presentation')(req, res, async (uploadError) => {
+    uploadFields(req, res, async (uploadError) => {
       const identity = readUploadIdentity(req);
       if (uploadError) {
         res.status(400).type('html').send(renderUploadPage({ identity, error: uploadError.message }));
@@ -263,7 +301,7 @@ function startUploadServer({ port, onUploaded }) {
   });
 
   app.post('/upload', (req, res) => {
-    upload.single('presentation')(req, res, async (uploadError) => {
+    uploadFields(req, res, async (uploadError) => {
       if (uploadError) {
         res.status(400).json({ ok: false, error: uploadError.message });
         return;

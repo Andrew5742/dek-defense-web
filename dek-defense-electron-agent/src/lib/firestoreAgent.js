@@ -244,6 +244,8 @@ class FirestoreAgent {
         registeredAt: student.registeredAt || now,
         presentationStatus,
         queuePosition,
+        wantsZoomDemo: payload.wantsZoomDemo === true || student.wantsZoomDemo === true,
+        hasVideo: Boolean(payload.video) || student.hasVideo === true,
         updatedAt: now
       } : student),
       presentations: [
@@ -266,7 +268,7 @@ class FirestoreAgent {
         type: 'PRESENTATION_UPLOADED',
         actor: 'student',
         message: `Презентацію завантажено в Electron Agent: ${existingStudent?.fullName || payload.studentId}`,
-        payload: { studentId: payload.studentId, fileName: payload.fileName, stationId: this.stationId },
+        payload: { studentId: payload.studentId, fileName: payload.fileName, videoFileName: payload.video?.fileName || null, wantsZoomDemo: payload.wantsZoomDemo === true, stationId: this.stationId },
         createdAt: now
       }, ...base.events].slice(0, 1000)
     };

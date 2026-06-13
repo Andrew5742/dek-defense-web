@@ -36,12 +36,15 @@ export function getOnlineUploadUrl(state: AppState): string | undefined {
 export function getAgentUploadPageUrl(state: AppState, student: Student): string | undefined {
   const uploadUrl = getOnlineUploadUrl(state)
   if (!uploadUrl || typeof window === 'undefined') return undefined
+  const session = state.sessions.find((item) => item.id === student.sessionId)
   try {
     const url = new URL(`${uploadUrl}/upload-page`)
     url.searchParams.set('sessionId', student.sessionId)
     url.searchParams.set('studentId', student.id)
     url.searchParams.set('studentName', student.fullName)
     url.searchParams.set('returnUrl', window.location.href)
+    if (session?.zoomUrl) url.searchParams.set('zoomUrl', session.zoomUrl)
+    if (student.wantsZoomDemo) url.searchParams.set('wantsZoomDemo', '1')
     return url.toString()
   } catch {
     return undefined
@@ -88,6 +91,83 @@ export function updateSession(state: AppState, sessionId: string, patch: Partial
     actor: 'admin',
     message: `Оновлено сесію ${patch.title || session.title}`,
     payload: { sessionId, patch }
+  })
+}
+
+export function createContinuationSession(state: AppState, sourceSessionId: string, input: Partial<DefenseSession>): AppState {
+  const sourceSession = state.sessions.find((session) => session.id === sourceSessionId)
+  if (!sourceSession) return state
+  const now = nowIso()
+  const remainingStudents = state.students.filter((student) => student.sessionId === sourceSessionId && student.defenseStatus !== 'defended')
+  const groupNames = Array.from(new Set(remainingStudents.map((student) => student.groupName).filter(Boolean)))
+  const session: DefenseSession = {
+    id: uid('session'),
+    title: input.title || sourceSession.title || 'Захист',
+    date: input.date || new Date().toISOString().slice(0, 10),
+    groupNames,
+    registrationOpenFrom: input.registrationOpenFrom || sourceSession.registrationOpenFrom || '08:00',
+    registrationOpenTo: input.registrationOpenTo || sourceSession.registrationOpenTo || '09:00',
+    defenseStartsAt: input.defenseStartsAt || sourceSession.defenseStartsAt || '09:05',
+    zoomUrl: input.zoomUrl ?? sourceSession.zoomUrl ?? '',
+    manualRegistrationOpen: false,
+    isRegistrationLocked: false,
+    publicToken: uid('pub'),
+    stationId: input.stationId || sourceSession.stationId || state.stations.find((station) => station.online)?.id || state.stations[0]?.id || 'station_local_demo',
+    createdAt: now,
+    updatedAt: now
+  }
+
+  const groupMap = new Map<string, Group>()
+  const groups = [...state.groups]
+  for (const groupName of groupNames) {
+    const sourceGroup = state.groups.find((group) => group.sessionId === sourceSessionId && group.name === groupName)
+    const group: Group = {
+      id: uid('group'),
+      sessionId: session.id,
+      name: groupName,
+      specialtyCode: sourceGroup?.specialtyCode,
+      specialtyName: sourceGroup?.specialtyName,
+      educationProgram: sourceGroup?.educationProgram,
+      studyForm: sourceGroup?.studyForm
+    }
+    groupMap.set(groupName, group)
+    groups.push(group)
+  }
+
+  const students: Student[] = remainingStudents.map((student) => {
+    const group = groupMap.get(student.groupName)
+    return {
+      ...student,
+      id: uid('student'),
+      sessionId: session.id,
+      groupId: group?.id || student.groupId,
+      registrationStatus: 'not_registered',
+      presentationStatus: 'missing',
+      defenseStatus: 'waiting',
+      registeredAt: undefined,
+      queuePosition: undefined,
+      wantsZoomDemo: false,
+      hasVideo: false,
+      notes: student.defenseStatus === 'problem'
+        ? [student.notes, `Перенесено з ${sourceSession.date} після проблемного захисту`].filter(Boolean).join('\n')
+        : student.notes,
+      createdAt: now,
+      updatedAt: now
+    }
+  })
+
+  return addEvent({
+    ...state,
+    activeSessionId: session.id,
+    sessions: [session, ...state.sessions],
+    groups,
+    students: [...state.students, ...students]
+  }, {
+    sessionId: session.id,
+    type: 'SESSION_CREATED',
+    actor: 'admin',
+    message: `Створено наступну сесію з незахищених: ${students.length} студентів`,
+    payload: { sourceSessionId, sessionId: session.id, count: students.length }
   })
 }
 
@@ -606,6 +686,7 @@ export function requestOpenUploadPage(state: AppState, sessionId: string, studen
     studentId,
     studentName: student?.fullName || '',
     targetStationId: targetStationId(state, session),
+    zoomUrl: session?.zoomUrl || '',
     status: 'pending',
     createdAt: nowIso(),
     updatedAt: nowIso()

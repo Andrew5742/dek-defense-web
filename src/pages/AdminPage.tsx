@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { AppState, DefenseSession, ImportReview, ProtocolRow, ProtocolSnapshot, Student } from '../shared/types'
 import { downloadTextFile, formatLocalDateTime, nowIso } from '../shared/utils'
-import { addManualStudent, addToQueue, confirmImportReview, createSession, removeFromQueue, removeSession, removeStudent, reorderQueue, requestOpenPresentation, requestOpenUploadPage, requestOpenZoom, requestShowDisplay, requestStartDefenses, saveImportReview, saveProtocol, setDefenseStatus, setRegistrationLock, updateImportReview, updateSession, updateStudent } from '../services/actions'
+import { addManualStudent, addToQueue, confirmImportReview, createContinuationSession, createSession, removeFromQueue, removeSession, removeStudent, reorderQueue, requestOpenPresentation, requestOpenUploadPage, requestOpenZoom, requestShowDisplay, requestStartDefenses, saveImportReview, saveProtocol, setDefenseStatus, setRegistrationLock, updateImportReview, updateSession, updateStudent } from '../services/actions'
 import { importDocx, importFromPastedText } from '../services/importService'
 import { isFirebaseEnabled } from '../services/firebaseAdapter'
 import { StatusBadge } from '../components/StatusBadge'
@@ -109,6 +109,17 @@ function Overview({ state, setState, activeSession, setActiveSessionId }: Props)
             setState(next)
             setActiveSessionId(next.sessions[0].id)
           }}>Створити</button>
+          {activeSession && <button onClick={() => {
+            const remaining = state.students.filter((student) => student.sessionId === activeSession.id && student.defenseStatus !== 'defended').length
+            if (!remaining) {
+              alert('У цій даті немає студентів для перенесення: усі вже мають статус "захистився".')
+              return
+            }
+            if (!confirm(`Створити нову дату з незахищених студентів?\n\nОснова: ${activeSession.title} · ${activeSession.date}\nБуде перенесено: ${remaining}`)) return
+            const next = createContinuationSession(state, activeSession.id, { title, date, registrationOpenFrom: from, registrationOpenTo: to, defenseStartsAt: start, zoomUrl })
+            setState(next)
+            setActiveSessionId(next.sessions[0].id)
+          }}>Нова дата з незахищених</button>}
         </div>
         <table>
           <thead><tr><th>Назва</th><th>Дата</th><th>Запис</th><th>Групи</th><th>Дії</th></tr></thead>
@@ -285,7 +296,7 @@ function StudentsPanel({ state, setState, session, onEdit }: { state: AppState; 
         <thead><tr><th>ПІБ</th><th>Група</th><th>Тема</th><th>Керівник</th><th>Запис</th><th>Преза</th><th>Захист</th><th>Дії</th></tr></thead>
         <tbody>{students.map((s) => <tr key={s.id}>
           <td>{s.fullName}</td><td>{s.groupName}</td><td className="topic">{s.thesisTitleEdited}</td><td>{s.supervisorEdited}</td>
-          <td><StatusBadge value={s.registrationStatus} /></td><td><StatusBadge value={s.presentationStatus} /></td><td><StatusBadge value={s.defenseStatus} /></td>
+          <td><StatusBadge value={s.registrationStatus} /></td><td><StatusBadge value={s.presentationStatus} /> {s.hasVideo && <span className="status info">відео</span>} {s.wantsZoomDemo && <span className="status info">показ результату в Zoom</span>}</td><td><StatusBadge value={s.defenseStatus} /></td>
           <td className="actions compact-actions">
             <button onClick={() => onEdit(s)}>Редагувати</button>
             <button className="danger" onClick={() => {
@@ -330,7 +341,7 @@ function QueuePanel({ state, setState, session, onEdit }: { state: AppState; set
             <td>{q.position}</td>
             <td><b>{s.fullName}</b><br/><small>{s.groupName} · {s.thesisTitleEdited}</small></td>
             <td><StatusBadge value={s.defenseFormat || 'offline'} /><br/><button onClick={() => setState(updateStudent(state, s.id, { defenseFormat: (s.defenseFormat || 'offline') === 'online' ? 'offline' : 'online' }))}>{(s.defenseFormat || 'offline') === 'online' ? 'Зробити очно' : 'Зробити онлайн'}</button></td>
-            <td><StatusBadge value={s.presentationStatus} /></td>
+            <td><StatusBadge value={s.presentationStatus} /> {s.hasVideo && <span className="status info">відео</span>} {s.wantsZoomDemo && <span className="status info">показ результату в Zoom</span>}</td>
             <td><StatusBadge value={s.defenseStatus} /></td>
             <td>
               <div className="protocol-fields">
@@ -345,6 +356,7 @@ function QueuePanel({ state, setState, session, onEdit }: { state: AppState; set
               <button onClick={() => setState(reorderQueue(state, session.id, s.id, -1))}>↑</button>
               <button onClick={() => setState(reorderQueue(state, session.id, s.id, 1))}>↓</button>
               <button onClick={() => setState(requestOpenPresentation(state, session.id, s.id))}>{(s.defenseFormat || 'offline') === 'online' ? 'Відкрити Zoom' : 'Відкрити презу'}</button>
+              {s.wantsZoomDemo && <button onClick={() => setState(requestOpenZoom(state, session.id, s.id))}>Відкрити Zoom demo</button>}
               <button onClick={() => setState(requestOpenUploadPage(state, session.id, s.id))}>Завантажити презу</button>
               <button onClick={() => setState(requestShowDisplay(state, session.id))}>Повернути Display</button>
               <button onClick={() => setState(setDefenseStatus(state, s.id, 'defended'))}>Захистився</button>

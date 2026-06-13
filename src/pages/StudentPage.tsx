@@ -1,24 +1,38 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { AppState, DefenseSession, Student } from '../shared/types'
 import { canRegister } from '../shared/utils'
-import { getAgentUploadPageUrl } from '../services/actions'
+import { getAgentUploadPageUrl, updateStudent } from '../services/actions'
 import { StatusBadge } from '../components/StatusBadge'
 
-type Props = { state: AppState; setState: (s: AppState) => void; activeSession?: DefenseSession; publicMode?: boolean }
+type Props = {
+  state: AppState
+  setState: (s: AppState) => void
+  activeSession?: DefenseSession
+  publicMode?: boolean
+  onStartFullscreen?: () => void
+}
 
-function buildUploadPageUrl(baseUrl: string, student: Student) {
+function buildUploadPageUrl(baseUrl: string, student: Student, session?: DefenseSession) {
   const url = new URL(`${baseUrl.replace(/\/+$/, '')}/upload-page`)
   url.searchParams.set('sessionId', student.sessionId)
   url.searchParams.set('studentId', student.id)
   url.searchParams.set('studentName', student.fullName)
   url.searchParams.set('returnUrl', window.location.href)
+  if (session?.zoomUrl) url.searchParams.set('zoomUrl', session.zoomUrl)
+  if (student.wantsZoomDemo) url.searchParams.set('wantsZoomDemo', '1')
   return url.toString()
 }
 
-export function StudentPage({ state, activeSession, publicMode = false }: Props) {
+function normalizeSearch(value: string) {
+  return value.toLowerCase().replace(/\s+/g, ' ').trim()
+}
+
+export function StudentPage({ state, setState, activeSession, publicMode = false, onStartFullscreen }: Props) {
   const [query, setQuery] = useState('')
-  const [selected, setSelected] = useState<Student | null>(null)
+  const [selectedId, setSelectedId] = useState('')
   const [desktopUploadPageUrl, setDesktopUploadPageUrl] = useState('')
+
+  const selected = selectedId ? state.students.find((student) => student.id === selectedId) || null : null
 
   useEffect(() => {
     let disposed = false
@@ -27,56 +41,106 @@ export function StudentPage({ state, activeSession, publicMode = false }: Props)
     window.dekAgent.getStatus().then((status) => {
       if (disposed) return
       const base = status.lanUploadUrl || status.uploadUrl
-      if (base) setDesktopUploadPageUrl(buildUploadPageUrl(base, selected))
+      if (base) setDesktopUploadPageUrl(buildUploadPageUrl(base, selected, activeSession))
     }).catch(() => undefined)
     return () => { disposed = true }
-  }, [selected])
+  }, [selected?.id, activeSession?.zoomUrl])
 
-  if (!activeSession) return <main className="student-wrap"><div className="student-box"><h1>Сесію не обрано</h1></div></main>
+  const open = activeSession ? canRegister(activeSession) : false
+  const search = normalizeSearch(query)
+  const students = useMemo(() => {
+    if (!activeSession) return []
+    return state.students
+      .filter((student) => student.sessionId === activeSession.id && student.isAllowedToRegister)
+      .filter((student) => normalizeSearch([student.fullName, student.groupName, student.thesisTitleEdited].join(' ')).includes(search))
+      .slice(0, 20)
+  }, [activeSession?.id, state.students, search])
 
-  const open = canRegister(activeSession)
-  const students = state.students
-    .filter((s) => s.sessionId === activeSession.id && s.isAllowedToRegister)
-    .filter((s) => [s.fullName, s.groupName, s.thesisTitleEdited].join(' ').toLowerCase().includes(query.toLowerCase()))
-    .slice(0, 20)
+  if (!activeSession) {
+    return <main className="student-wrap"><div className="student-box"><h1>Сесію не обрано</h1></div></main>
+  }
+
   const selectedAgentUploadPageUrl = selected ? getAgentUploadPageUrl(state, selected) || desktopUploadPageUrl : undefined
-  const selectedQueueItem = selected ? state.queue.find((q) => q.sessionId === selected.sessionId && q.studentId === selected.id) : undefined
-  const selectedHasPresentation = selected?.presentationStatus === 'ready'
+  const selectedQueueItem = selected ? state.queue.find((item) => item.sessionId === selected.sessionId && item.studentId === selected.id) : undefined
+  const selectedHasPresentation = selected?.presentationStatus === 'ready' || selected?.presentationStatus === 'conversion_required'
+
+  function patchSelected(patch: Partial<Student>) {
+    if (!selected) return
+    setState(updateStudent(state, selected.id, patch, 'student'))
+  }
 
   return <main className="student-wrap">
     <div className="student-box">
       <div className="student-head">
-        <h1>Запис на захист</h1>
-        <p>{activeSession.title} · {activeSession.date} · запис {activeSession.registrationOpenFrom}-{activeSession.registrationOpenTo}</p>
-        {publicMode && <small className="role-note">Desktop-режим ПК захисту. Адмінка з цієї сторінки недоступна.</small>}
+        <div>
+          <h1>Запис на захист</h1>
+          <p>{activeSession.title} · {activeSession.date} · запис {activeSession.registrationOpenFrom}-{activeSession.registrationOpenTo}</p>
+          {publicMode && <small className="role-note">Desktop-режим ПК захисту. Адмінка з цієї сторінки недоступна.</small>}
+        </div>
+        {publicMode && onStartFullscreen && <button type="button" onClick={onStartFullscreen}>Повноекранний запис</button>}
       </div>
-      {!open && <div className="closed-box">Запис на захист закрито. Якщо ви не встигли записатися, будь ласка, зверніться до представників комісії.</div>}
+
+      <div className="student-instruction">
+        <b>Як записатися:</b>
+        <ol>
+          <li>Введіть своє прізвище й оберіть себе зі списку.</li>
+          <li>Перевірте ПІБ, групу, тему та керівника.</li>
+          <li>Якщо треба показувати результат роботи в Zoom, поставте відповідну галочку.</li>
+          <li>Натисніть “Відкрити завантаження через Electron Agent” і завантажте презентацію.</li>
+          <li>Після успішного завантаження натисніть “Підтвердити запис”.</li>
+        </ol>
+        <p>Обов’язкова презентація: PDF, PPTX, PPT або ODP. Відео можна додати за потреби: MP4, MOV, AVI, MKV або WEBM.</p>
+      </div>
+
+      {!open && <div className="closed-box">Запис на захист закрито. Якщо ви не встигли записатися, зверніться до представників комісії.</div>}
+
       {!selected && <>
-        <label className="big-search">Введіть своє прізвище<input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Наприклад: Яковчук" /></label>
+        <label className="big-search">Введіть своє прізвище
+          <input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Наприклад: Яковчук" />
+        </label>
         <div className="student-results">
-          {query.length > 1 && students.map((s) => <button className="student-result" key={s.id} onClick={() => setSelected(s)} disabled={!open}>
-            <b>{s.fullName}</b><span>{s.groupName}</span><small>{s.thesisTitleEdited}</small>
+          {query.length > 1 && students.map((student) => <button className="student-result" key={student.id} onClick={() => setSelectedId(student.id)} disabled={!open}>
+            <b>{student.fullName}</b>
+            <span>{student.groupName}</span>
+            <small>{student.thesisTitleEdited}</small>
           </button>)}
           {query.length > 1 && students.length === 0 && <div className="empty">Не знайдено. Перевірте ПІБ або зверніться до секретаря.</div>}
         </div>
       </>}
+
       {selected && <div className="confirm-card">
-        <button onClick={() => setSelected(null)}>← Назад до пошуку</button>
+        <button onClick={() => setSelectedId('')}>← Назад до пошуку</button>
         <h2>{selected.fullName}</h2>
         <p><b>Група:</b> {selected.groupName}</p>
         <p><b>Тема:</b> {selected.thesisTitleEdited}</p>
         <p><b>Керівник:</b> {selected.supervisorEdited}</p>
-        <p><b>Статус:</b> <StatusBadge value={selected.registrationStatus} /> <StatusBadge value={selected.presentationStatus} /></p>
+        <p><b>Статус:</b> <StatusBadge value={selected.registrationStatus} /> <StatusBadge value={selected.presentationStatus} /> {selected.hasVideo && <span className="status info">відео</span>} {selected.wantsZoomDemo && <span className="status info">показ результату в Zoom</span>}</p>
+
         {selectedQueueItem && <div className="ok-box">Ви вже в черзі під номером {selectedQueueItem.position}. Повторно записуватися не потрібно.</div>}
+
         {open ? <div className="upload-box">
           <h3>Щоб завершити запис, обов’язково завантажте презентацію</h3>
-          <p>Дозволені формати: PDF, PPTX, PPT, ODP.</p>
-          <p className="hint">Файл зберігається локально на цьому ПК захисту через Electron Agent. PPTX/PPT/ODP буде відкрито напряму через PowerPoint у повноекранному режимі.</p>
+          <p>Дозволені формати презентації: PDF, PPTX, PPT, ODP. Відео є необов’язковим: MP4, MOV, AVI, MKV, WEBM.</p>
+          <p className="hint">Файли зберігаються локально на цьому ПК захисту через Electron Agent. PPTX/PPT/ODP відкриваються через PowerPoint у повноекранному режимі.</p>
+
+          <label className="check-row">
+            <input type="checkbox" checked={selected.wantsZoomDemo === true} onChange={(event) => patchSelected({ wantsZoomDemo: event.target.checked })} />
+            Бажаю демонструвати в Zoom результати роботи
+          </label>
+          {selected.wantsZoomDemo && activeSession.zoomUrl && <div className="zoom-help">
+            <b>Zoom для демонстрації:</b>
+            <a href={activeSession.zoomUrl} target="_blank" rel="noreferrer">{activeSession.zoomUrl}</a>
+            <button type="button" onClick={() => navigator.clipboard?.writeText(activeSession.zoomUrl || '')}>Скопіювати</button>
+            <img alt="QR Zoom" src={`https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(activeSession.zoomUrl)}`} />
+            <small>Можна відсканувати QR телефоном і переслати посилання собі в месенджер.</small>
+          </div>}
+
           {selectedQueueItem && selectedHasPresentation
             ? <div className="ok-box">Запис підтверджено: презентація є, місце в черзі збережено.</div>
             : selectedAgentUploadPageUrl
-            ? <p><button type="button" onClick={() => { window.location.href = selectedAgentUploadPageUrl }}>Відкрити завантаження через Electron Agent</button></p>
-            : <div className="closed-box">Electron Agent ще не передав адресу завантаження. Перевірте, що десктопна апка запущена саме на ПК захисту.</div>}
+              ? <p><button type="button" onClick={() => { window.location.href = selectedAgentUploadPageUrl }}>Відкрити завантаження через Electron Agent</button></p>
+              : <div className="closed-box">Electron Agent ще не передав адресу завантаження. Перевірте, що desktop-апка запущена саме на ПК захисту.</div>}
+
           {selected.presentationStatus === 'ready' && <div className="ok-box">Презентація завантажена і готова до відкриття.</div>}
           {selected.presentationStatus === 'conversion_required' && <div className="warn-box">Презентація завантажена. Для PPT/PPTX/ODP система відкриє файл напряму через PowerPoint.</div>}
           {selected.presentationStatus === 'error' && <div className="closed-box">

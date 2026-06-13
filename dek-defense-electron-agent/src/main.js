@@ -405,6 +405,7 @@ async function openUploadPage(command = {}) {
   url.searchParams.set('sessionId', command.sessionId || '');
   url.searchParams.set('studentId', command.studentId || '');
   if (command.studentName) url.searchParams.set('studentName', command.studentName);
+  if (command.zoomUrl) url.searchParams.set('zoomUrl', command.zoomUrl);
 
   const returnUrl = new URL(WEB_APP_URL);
   returnUrl.searchParams.set('desktop', 'defense');

@@ -258,6 +258,16 @@ export default function App() {
       setShowLockOverlay(true)
       return
     }
+    if (nextPage === 'display') {
+      localStorage.removeItem(STUDENT_LOCK_KEY)
+      localStorage.setItem(DISPLAY_LOCK_KEY, '1')
+      setStudentLocked(false)
+      setDisplayLocked(true)
+      requestAppFullscreen()
+    } else {
+      localStorage.removeItem(DISPLAY_LOCK_KEY)
+      setDisplayLocked(false)
+    }
     setPageRaw(nextPage)
     writeDesktopUrl(nextPage)
   }
@@ -301,6 +311,7 @@ export default function App() {
       {defensePage === 'agent' && <AgentPage state={state} setState={setState} activeSession={activeSession} />}
       {defensePage === 'display' && <DisplayPage state={state} activeSession={activeSession} locked={displayLocked} />}
       {defensePage === 'display' && <button className="display-exit-button" onClick={() => setShowLockOverlay(true)}>Вийти</button>}
+      {defensePage === 'student' && studentLocked && <button className="display-exit-button" onClick={() => setShowLockOverlay(true)}>Вийти</button>}
       {showLockOverlay && <FullscreenLockOverlay
         onReturnFullscreen={() => { setShowLockOverlay(false); requestAppFullscreen() }}
         onUnlock={exitDisplayMode}

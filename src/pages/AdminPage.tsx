@@ -168,13 +168,21 @@ function ImportPanel({ state, setState, session }: { state: AppState; setState: 
   const [paste, setPaste] = useState('')
   const review = state.importReviews.find((x) => x.sessionId === session.id)
 
-  async function handleFile(file?: File) {
-    if (!file) return
-    if (!file.name.toLowerCase().endsWith('.docx')) {
+  async function handleFiles(fileList?: FileList | null) {
+    const files = Array.from(fileList || [])
+    if (!files.length) return
+    const invalid = files.find((file) => !file.name.toLowerCase().endsWith('.docx'))
+    if (invalid) {
       alert('У локальній веб-версії зараз стабільно підтримано DOCX. Для PDF використай copy-paste або DOCX-джерело.')
       return
     }
-    const imported = await importDocx(file, session.id)
+    const importedFiles = await Promise.all(files.map((file) => importDocx(file, session.id)))
+    const imported = importedFiles.slice(1).reduce((acc, item) => ({
+      ...acc,
+      sourceName: Array.from(new Set([...acc.sourceName.split('; '), item.sourceName])).join('; '),
+      groupName: acc.groupName === item.groupName ? acc.groupName : 'Кілька груп',
+      students: [...acc.students, ...item.students]
+    }), importedFiles[0])
     setState(saveImportReview(state, imported))
   }
 
@@ -187,7 +195,7 @@ function ImportPanel({ state, setState, session }: { state: AppState; setState: 
       <h1>Імпорт списку</h1>
       <div className="panel">
         <h2>Файл DOCX або вставлений текст</h2>
-        <input type="file" accept=".docx" onChange={(e) => void handleFile(e.target.files?.[0])} />
+        <input type="file" accept=".docx" multiple onChange={(e) => void handleFiles(e.target.files)} />
         <textarea className="paste" value={paste} onChange={(e) => setPaste(e.target.value)} placeholder="Або встав таблицю з Google Docs / Word / Excel..." />
         <button onClick={() => setState(saveImportReview(state, importFromPastedText(paste, session.id)))}>Розпізнати вставлений текст</button>
       </div>

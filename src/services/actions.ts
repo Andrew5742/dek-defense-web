@@ -11,7 +11,7 @@ import type {
   QueueItem,
   Student
 } from '../shared/types'
-import { extOf, isAllowedPresentationExt, nowIso, sanitizeFilePart, uid } from '../shared/utils'
+import { extOf, isAllowedPresentationExt, normalizeText, nowIso, sanitizeFilePart, uid } from '../shared/utils'
 import { getBlob, saveBlob } from './localRepository'
 
 export function addEvent(state: AppState, event: Omit<EventLogItem, 'id' | 'createdAt'>): AppState {
@@ -138,12 +138,42 @@ function requestCommand(state: AppState, command: Command, event: Omit<EventLogI
   return addEvent({ ...state, commands: [command, ...state.commands] }, event)
 }
 
+function importDraftKey(value: { fullName: string; groupName?: string }) {
+  return `${normalizeText(value.fullName).toLowerCase()}::${normalizeText(value.groupName || '').toLowerCase()}`
+}
+
+function mergeImportStudents(primary: ImportReview, incoming: ImportReview): ImportReview {
+  const seen = new Set<string>()
+  const students = [...primary.students, ...incoming.students].filter((student) => {
+    const key = importDraftKey(student)
+    if (!student.fullName || seen.has(key)) return false
+    seen.add(key)
+    return true
+  }).map((student, idx) => ({ ...student, rowNumber: idx + 1 }))
+  const sourceNames = Array.from(new Set([...primary.sourceName.split('; '), ...incoming.sourceName.split('; ')].filter(Boolean)))
+  const groupNames = Array.from(new Set(students.map((student) => student.groupName).filter(Boolean)))
+
+  return {
+    ...primary,
+    sourceName: sourceNames.join('; '),
+    specialtyCode: primary.specialtyCode || incoming.specialtyCode,
+    specialtyName: primary.specialtyName || incoming.specialtyName,
+    educationProgram: primary.educationProgram || incoming.educationProgram,
+    studyForm: primary.studyForm || incoming.studyForm,
+    groupName: groupNames.length === 1 ? groupNames[0] : 'Кілька груп',
+    students,
+    createdAt: primary.createdAt
+  }
+}
+
 export function saveImportReview(state: AppState, review: ImportReview): AppState {
-  return addEvent({ ...state, importReviews: [review, ...state.importReviews.filter((x) => x.id !== review.id)] }, {
+  const existing = state.importReviews.find((x) => x.sessionId === review.sessionId)
+  const nextReview = existing && existing.id !== review.id ? mergeImportStudents(existing, review) : mergeImportStudents(review, { ...review, students: [] })
+  return addEvent({ ...state, importReviews: [nextReview, ...state.importReviews.filter((x) => x.id !== nextReview.id && x.sessionId !== nextReview.sessionId)] }, {
     sessionId: review.sessionId,
     type: 'IMPORT_REVIEW_CREATED',
     actor: 'admin',
-    message: `Імпортовано чернетку: ${review.sourceName}, студентів: ${review.students.length}`
+    message: `Імпортовано чернетку: ${nextReview.sourceName}, студентів: ${nextReview.students.length}`
   })
 }
 
@@ -156,10 +186,10 @@ export function confirmImportReview(state: AppState, reviewId: string): AppState
   if (!review) return state
   const now = nowIso()
   const selected = review.students.filter((x) => x.selected)
-  const groupName = review.groupName || selected[0]?.groupName || 'Без групи'
-  let group = state.groups.find((x) => x.sessionId === review.sessionId && x.name === groupName)
   const groups = [...state.groups]
-  if (!group) {
+  const ensureGroup = (groupName: string) => {
+    let group = groups.find((x) => x.sessionId === review.sessionId && x.name === groupName)
+    if (group) return group
     group = {
       id: uid('group'),
       sessionId: review.sessionId,
@@ -170,14 +200,24 @@ export function confirmImportReview(state: AppState, reviewId: string): AppState
       studyForm: review.studyForm
     }
     groups.push(group)
+    return group
   }
-  const existingNames = new Set(state.students.filter((s) => s.sessionId === review.sessionId).map((s) => s.fullName.toLowerCase()))
+  const existingKeys = new Set(state.students.filter((s) => s.sessionId === review.sessionId).map(importDraftKey))
+  const importedKeys = new Set<string>()
   const students: Student[] = selected
-    .filter((draft) => !existingNames.has(draft.fullName.toLowerCase()))
-    .map((draft) => ({
+    .filter((draft) => {
+      const key = importDraftKey(draft)
+      if (existingKeys.has(key) || importedKeys.has(key)) return false
+      importedKeys.add(key)
+      return true
+    })
+    .map((draft) => {
+      const groupName = draft.groupName || review.groupName || 'Без групи'
+      const group = ensureGroup(groupName)
+      return {
       id: uid('student'),
       sessionId: review.sessionId,
-      groupId: group!.id,
+      groupId: group.id,
       groupName: draft.groupName || groupName,
       fullName: draft.fullName,
       thesisTitleOriginal: draft.thesisTitle,
@@ -196,7 +236,9 @@ export function confirmImportReview(state: AppState, reviewId: string): AppState
       defenseStatus: 'waiting',
       createdAt: now,
       updatedAt: now
-    }))
+      }
+    })
+  const importedGroupNames = Array.from(new Set(students.map((student) => student.groupName)))
   const next = {
     ...state,
     groups,
@@ -204,7 +246,7 @@ export function confirmImportReview(state: AppState, reviewId: string): AppState
     importReviews: state.importReviews.filter((x) => x.id !== reviewId),
     sessions: state.sessions.map((s) =>
       s.id === review.sessionId
-        ? { ...s, groupNames: Array.from(new Set([...s.groupNames, groupName])), updatedAt: now }
+        ? { ...s, groupNames: Array.from(new Set([...s.groupNames, ...importedGroupNames])), updatedAt: now }
         : s
     )
   }

@@ -218,6 +218,10 @@ function requestCommand(state: AppState, command: Command, event: Omit<EventLogI
   return addEvent({ ...state, commands: [command, ...state.commands] }, event)
 }
 
+function requestFreshCommand(state: AppState, command: Command, event: Omit<EventLogItem, 'id' | 'createdAt'>): AppState {
+  return addEvent({ ...state, commands: [command, ...state.commands] }, event)
+}
+
 function importDraftKey(value: { fullName: string; groupName?: string }) {
   return `${normalizeText(value.fullName).toLowerCase()}::${normalizeText(value.groupName || '').toLowerCase()}`
 }
@@ -676,7 +680,7 @@ export function requestOpenZoom(state: AppState, sessionId: string, studentId?: 
     createdAt: nowIso(),
     updatedAt: nowIso()
   }
-  return requestCommand(state, command, {
+  return requestFreshCommand(state, command, {
     sessionId,
     type: 'ZOOM_OPEN_REQUESTED',
     actor: 'admin',

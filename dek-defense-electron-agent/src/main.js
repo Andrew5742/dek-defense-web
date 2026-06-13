@@ -11,7 +11,7 @@ const { startUploadServer } = require('./lib/uploadServer');
 const { FirestoreAgent } = require('./lib/firestoreAgent');
 const { getLocalIPv4Addresses, getPreferredLocalAddress } = require('./lib/network');
 const { getStorageRoot } = require('./lib/paths');
-const { normalizeZoomLaunchUrl } = require('./lib/zoom');
+const { openZoomMeeting } = require('./lib/zoom');
 
 const store = new Store();
 let mainWindow;
@@ -496,7 +496,7 @@ ipcMain.handle('agent:open-storage', async () => {
 });
 
 ipcMain.handle('agent:open-zoom', async (_, zoomUrl) => {
-  await shell.openExternal(normalizeZoomLaunchUrl(zoomUrl || ZOOM_URL));
+  await openZoomMeeting(shell, zoomUrl || ZOOM_URL);
 });
 
 ipcMain.handle('agent:close-presentation', async (_, password) => {

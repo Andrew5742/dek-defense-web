@@ -2,6 +2,7 @@ const path = require('path');
 const fs = require('fs');
 const { shell } = require('electron');
 const { getStudentPresentationDir } = require('./paths');
+const { normalizeZoomLaunchUrl } = require('./zoom');
 
 const APP_STATE_COLLECTION = 'dek_app';
 const APP_STATE_DOC = 'state';
@@ -150,7 +151,7 @@ class FirestoreAgent {
       if (command.type === 'open_zoom') {
         await this.closePresentationFullscreen?.();
         this.closeDisplayFullscreen?.();
-        await shell.openExternal(command.zoomUrl || this.zoomUrl || 'zoommtg://zoom.us/join');
+        await shell.openExternal(normalizeZoomLaunchUrl(command.zoomUrl || this.zoomUrl));
         await this.setCommandStatus(commandId, 'done');
         await this.addEvent('ZOOM_OPENED', { sessionId: command.sessionId, studentId: command.studentId || null });
         return;

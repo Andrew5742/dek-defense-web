@@ -656,6 +656,15 @@ export function requestOpenPresentation(state: AppState, sessionId: string, stud
 
 export function requestOpenZoom(state: AppState, sessionId: string, studentId?: string): AppState {
   const session = state.sessions.find((s) => s.id === sessionId)
+  if (!session?.zoomUrl?.trim()) {
+    return addEvent(state, {
+      sessionId,
+      type: 'ZOOM_OPEN_REQUESTED',
+      actor: 'admin',
+      message: 'Zoom link / Meeting ID не задано в сесії захисту',
+      payload: { studentId }
+    })
+  }
   const command: Command = {
     id: uid('cmd'),
     sessionId,

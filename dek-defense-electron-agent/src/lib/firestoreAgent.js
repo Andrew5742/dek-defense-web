@@ -61,6 +61,7 @@ class FirestoreAgent {
     this.closePresentationFullscreen = closePresentationFullscreen;
     this.unsubscribers = [];
     this.heartbeatTimer = null;
+    this.seenCommandIds = new Set();
   }
 
   async start() {
@@ -100,36 +101,93 @@ class FirestoreAgent {
   }
 
   listenCommands() {
-    const { collection, query, where, onSnapshot } = this.firebase;
-    const q = query(
+    const { collection, doc, query, where, onSnapshot } = this.firebase;
+    const targetedQuery = query(
       collection(this.db, 'dek_commands'),
       where('targetStationId', '==', this.stationId),
       where('status', '==', 'pending')
     );
+    const pendingQuery = query(
+      collection(this.db, 'dek_commands'),
+      where('status', '==', 'pending')
+    );
 
-    const unsub = onSnapshot(q, (snapshot) => {
+    const handleSnapshot = (snapshot) => {
       snapshot.docChanges().forEach((change) => {
         if (change.type === 'added' || change.type === 'modified') {
-          this.handleCommand(change.doc.id, change.doc.data()).catch((error) => {
+          const command = change.doc.data();
+          if (!this.shouldHandleCommand(command)) return;
+          this.handleCommand(change.doc.id, command).catch((error) => {
             this.sendToRenderer('agent-error', { error: error.message });
           });
         }
       });
-    });
-    this.unsubscribers.push(unsub);
+    };
+
+    const handleError = (error) => this.sendToRenderer('agent-error', { error: error.message });
+
+    this.unsubscribers.push(onSnapshot(targetedQuery, handleSnapshot, handleError));
+    this.unsubscribers.push(onSnapshot(pendingQuery, handleSnapshot, handleError));
+
+    const stateRef = doc(this.db, APP_STATE_COLLECTION, APP_STATE_DOC);
+    const stateUnsub = onSnapshot(stateRef, (snapshot) => {
+      const commands = snapshot.exists() && Array.isArray(snapshot.data()?.state?.commands)
+        ? snapshot.data().state.commands
+        : [];
+      for (const command of commands) {
+        if (!command?.id || command.status !== 'pending' || !this.shouldHandleCommand(command)) continue;
+        this.handleCommand(command.id, command).catch((error) => {
+          this.sendToRenderer('agent-error', { error: error.message });
+        });
+      }
+    }, handleError);
+    this.unsubscribers.push(stateUnsub);
+  }
+
+  shouldHandleCommand(command) {
+    if (!command || command.status !== 'pending') return false;
+    const commandId = command.id || `${command.type}:${command.sessionId}:${command.studentId || ''}:${command.createdAt || ''}`;
+    if (this.seenCommandIds.has(commandId)) return false;
+    if (this.isStaleCommand(command)) return false;
+    const target = command.targetStationId;
+    if (!target || target === this.stationId || target === 'station_local_demo') return true;
+    return true;
   }
 
   async setCommandStatus(commandId, status, extra = {}) {
-    const { doc, updateDoc, serverTimestamp } = this.firebase;
-    await updateDoc(doc(this.db, 'dek_commands', commandId), {
+    const { doc, getDoc, setDoc, serverTimestamp } = this.firebase;
+    const patch = {
       status,
       updatedAt: serverTimestamp(),
       handledAt: status === 'done' || status === 'error' ? serverTimestamp() : null,
       ...extra
-    });
+    };
+    await setDoc(doc(this.db, 'dek_commands', commandId), patch, { merge: true });
+
+    const stateRef = doc(this.db, APP_STATE_COLLECTION, APP_STATE_DOC);
+    const snapshot = await getDoc(stateRef);
+    if (!snapshot.exists() || !snapshot.data()?.state) return;
+    const state = snapshot.data().state;
+    if (!Array.isArray(state.commands)) return;
+    const commands = state.commands.map((command) => command.id === commandId
+      ? withoutUndefined({
+        ...command,
+        status,
+        error: extra.errorMessage || extra.error || command.error,
+        updatedAt: nowIso(),
+        handledAt: status === 'done' || status === 'error' ? nowIso() : command.handledAt
+      })
+      : command);
+    await setDoc(stateRef, {
+      state: withoutUndefined({ ...state, commands }),
+      updatedAt: serverTimestamp()
+    }, { merge: true });
   }
 
   async handleCommand(commandId, command) {
+    if (this.seenCommandIds.has(commandId)) return;
+    this.seenCommandIds.add(commandId);
+
     if (this.isStaleCommand(command)) {
       await this.setCommandStatus(commandId, 'error', { errorMessage: 'Stale command ignored by local agent' });
       await this.addEvent('COMMAND_STALE_IGNORED', { commandId, commandType: command.type, sessionId: command.sessionId });

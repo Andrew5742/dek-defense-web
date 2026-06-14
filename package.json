@@ -7,7 +7,8 @@
     "dev": "vite --host 127.0.0.1",
     "dev:lan": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",
-    "deploy:pages": "npm run build && gh-pages -d dist -b gh-pages --dotfiles -m \"deploy: manual\"",
+    "build:pages": "tsc --noEmit && vite build --base=/dek-defense-web/",
+    "deploy:pages": "npm run build:pages && gh-pages -d dist -b gh-pages --dotfiles -m \"deploy: manual\"",
     "deploy:firebase": "npm run build && npx firebase-tools deploy --only hosting",
     "preview": "vite preview --host 127.0.0.1",
     "typecheck": "tsc --noEmit"

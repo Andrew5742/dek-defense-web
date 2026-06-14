@@ -523,7 +523,10 @@ function normalizePublicMobileDisplay(value: unknown): PublicMobileDisplay | nul
 }
 
 export function subscribeMobileCompanion(token: string, callback: (snapshot: MobileCompanionSnapshot) => void): () => void {
-  if (!runtime || !token) return () => undefined
+  if (!runtime || !token) {
+    window.setTimeout(() => callback({ studentPage: null, mobileDisplay: null }), 0)
+    return () => undefined
+  }
   let studentPage: PublicStudentPage | null = null
   let mobileDisplay: PublicMobileDisplay | null = null
   let displayUnsub: (() => void) | undefined
@@ -537,12 +540,21 @@ export function subscribeMobileCompanion(token: string, callback: (snapshot: Mob
       displayUnsub = onSnapshot(doc(runtime.db, MOBILE_DISPLAY_COLLECTION, studentPage.sessionId), (displaySnap) => {
         mobileDisplay = displaySnap.exists() ? normalizePublicMobileDisplay(displaySnap.data()) : null
         emit()
-      }, (error) => console.warn('Mobile display listener failed', error))
+      }, (error) => {
+        console.warn('Mobile display listener failed', error)
+        mobileDisplay = null
+        emit()
+      })
     } else {
       mobileDisplay = null
     }
     emit()
-  }, (error) => console.warn('Student page listener failed', error))
+  }, (error) => {
+    console.warn('Student page listener failed', error)
+    studentPage = null
+    mobileDisplay = null
+    emit()
+  })
 
   return () => {
     studentUnsub()

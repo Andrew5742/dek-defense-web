@@ -32,10 +32,16 @@ service cloud.firestore {
     match /dek_stations/{stationId} {
       allow read, write: if true;
     }
+    function isStudentPageMirror() {
+      return request.resource.data.keys().hasAll(['token', 'studentId', 'sessionId', 'fullName', 'groupName']);
+    }
+
     match /student_pages/{token} {
       allow read: if true;
-      allow update: if request.resource.data.diff(resource.data).changedKeys().hasOnly(['registrationConfirmed', 'updatedAt']);
-      allow create, delete: if true;
+      allow create: if isStudentPageMirror();
+      allow update: if isStudentPageMirror() ||
+        request.resource.data.diff(resource.data).changedKeys().hasOnly(['registrationConfirmed', 'updatedAt']);
+      allow delete: if true;
     }
     match /mobile_display/{sessionId} {
       allow read: if true;

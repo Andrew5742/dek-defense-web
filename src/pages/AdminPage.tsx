@@ -340,7 +340,7 @@ function QueuePanel({ state, setState, session, onEdit }: { state: AppState; set
           return <tr key={q.id}>
             <td>{q.position}</td>
             <td><b>{s.fullName}</b><br/><small>{s.groupName} · {s.thesisTitleEdited}</small></td>
-            <td><StatusBadge value={s.defenseFormat || 'offline'} /><br/><button onClick={() => setState(updateStudent(state, s.id, { defenseFormat: (s.defenseFormat || 'offline') === 'online' ? 'offline' : 'online' }))}>{(s.defenseFormat || 'offline') === 'online' ? 'Зробити очно' : 'Зробити онлайн'}</button></td>
+            <td><StatusBadge value={s.defenseFormat || 'offline'} /><br/><button className="small-action" onClick={() => setState(updateStudent(state, s.id, { defenseFormat: (s.defenseFormat || 'offline') === 'online' ? 'offline' : 'online' }))}>{(s.defenseFormat || 'offline') === 'online' ? 'Зробити очно' : 'Зробити онлайн'}</button></td>
             <td><StatusBadge value={s.presentationStatus} /> {s.hasVideo && <span className="status info">відео</span>} {s.wantsZoomDemo && <span className="status info">показ результату в Zoom</span>}</td>
             <td><StatusBadge value={s.defenseStatus} /></td>
             <td>

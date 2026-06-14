@@ -1,5 +1,5 @@
 export const getPublicAppUrl = () => {
-  const raw = import.meta.env.VITE_PUBLIC_APP_URL || window.location.origin
+  const raw = import.meta.env.VITE_PUBLIC_APP_URL || 'https://dek-defence.web.app'
   return raw.replace(/\/$/, '')
 }
 

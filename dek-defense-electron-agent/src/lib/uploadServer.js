@@ -1,11 +1,13 @@
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
+const QRCode = require('qrcode');
 const { getStudentPresentationDir, safeName } = require('./paths');
 const { getPreferredLocalAddress } = require('./network');
 
 const allowedPresentationExt = new Set(['.pdf', '.pptx', '.ppt', '.odp']);
 const allowedVideoExt = new Set(['.mp4', '.mov', '.avi', '.mkv', '.webm']);
+const publicAppUrl = String(process.env.WEB_APP_URL || process.env.VITE_PUBLIC_APP_URL || 'https://dek-defence.web.app/').replace(/\/+$/, '');
 
 function normalizeUploadFileName(fileName) {
   const value = String(fileName || 'presentation');
@@ -47,7 +49,26 @@ function uploadPageUrl(identity, endpoint = '/upload-page') {
   return `${endpoint}?${params.toString()}`;
 }
 
-function renderUploadPage({ identity, error = '', success = false, presentation = null }) {
+function buildStudentTemporaryUrl(token) {
+  if (!token) return '';
+  return `${publicAppUrl}/s/${encodeURIComponent(token)}`;
+}
+
+async function renderQrBlock(token) {
+  const studentUrl = buildStudentTemporaryUrl(token);
+  if (!studentUrl) return '';
+  const qrDataUrl = await QRCode.toDataURL(studentUrl, { width: 190, margin: 1, errorCorrectionLevel: 'M' });
+  return `<div class="qr-box">
+        <div>
+          <b>Тимчасова сторінка студента</b>
+          <div class="short-link">/s/${escapeHtml(token)}</div>
+          <small>Після сканування QR статус реєстрації підтвердиться на мобільній сторінці.</small>
+        </div>
+        <img class="qr-frame" src="${qrDataUrl}" alt="QR">
+      </div>`;
+}
+
+async function renderUploadPage({ identity, error = '', success = false, presentation = null }) {
   const fallbackAction = uploadPageUrl(identity, '/upload-page');
   const uploadAction = uploadPageUrl(identity, '/upload');
   const confirmTarget = identity.returnUrl || uploadPageUrl(identity, '/upload-page');
@@ -67,6 +88,7 @@ function renderUploadPage({ identity, error = '', success = false, presentation 
     : error
       ? `<div class="error"><b>Не вдалося завантажити презентацію.</b><br>${escapeHtml(error)}</div>`
       : '';
+  const initialQrBlock = await renderQrBlock(presentation?.token);
 
   return `<!doctype html>
 <html lang="uk">
@@ -100,6 +122,10 @@ function renderUploadPage({ identity, error = '', success = false, presentation 
     .zoom-box { display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; align-items: center; border: 1px solid #cbd5e1; background: #f8fafc; padding: 10px; margin: 12px 0; }
     .zoom-box img { grid-row: span 3; width: 120px; height: 120px; }
     .zoom-box small { color: #475569; }
+    .qr-box { display: grid; grid-template-columns: 1fr auto; gap: 14px; align-items: center; border: 2px solid #111827; background: #f8fafc; padding: 14px; margin: 14px 0; }
+    .qr-frame { width: 190px; height: 190px; background: #fff; border: 1px solid #cbd5e1; }
+    .short-link { margin: 8px 0; font-family: Consolas, monospace; font-size: 18px; }
+    .idle-note { color: #64748b; font-size: 14px; margin-top: 10px; }
   </style>
 </head>
 <body>
@@ -112,6 +138,7 @@ function renderUploadPage({ identity, error = '', success = false, presentation 
     </table>
     <p class="hint">Дозволені формати: PDF, PPTX, PPT, ODP. PPTX/PPT/ODP відкриваються через PowerPoint у повноекранному режимі.</p>
     <div id="status">${initialStatus}</div>
+    <div id="qrMount">${initialQrBlock}</div>
     <form id="uploadForm" method="post" action="${escapeHtml(fallbackAction)}" enctype="multipart/form-data">
       <input type="hidden" name="sessionId" value="${escapeHtml(identity.sessionId)}">
       <input type="hidden" name="studentId" value="${escapeHtml(identity.studentId)}">
@@ -129,6 +156,7 @@ function renderUploadPage({ identity, error = '', success = false, presentation 
       <div id="progressText" class="progress-text">Підготовка завантаження...</div>
     </div>
     <a id="confirmBtn" class="button confirm" href="${escapeHtml(confirmTarget)}">Підтвердити запис</a>
+    <div id="idleNote" class="idle-note"></div>
   </main>
   <script>
     const form = document.getElementById('uploadForm');
@@ -137,18 +165,47 @@ function renderUploadPage({ identity, error = '', success = false, presentation 
     const progressBar = document.getElementById('progressBar');
     const progressText = document.getElementById('progressText');
     const statusBox = document.getElementById('status');
+    const qrMount = document.getElementById('qrMount');
     const confirmBtn = document.getElementById('confirmBtn');
+    const idleNote = document.getElementById('idleNote');
     const copyZoomBtn = document.getElementById('copyZoomBtn');
+    const returnUrl = ${JSON.stringify(identity.returnUrl || '')};
+    const publicAppUrl = ${JSON.stringify(publicAppUrl)};
+    let uploadInProgress = false;
+    let idleTimer = null;
+    function buildStudentUrl(token) {
+      return publicAppUrl.replace(/\/+$/, '') + '/s/' + encodeURIComponent(token);
+    }
+    function renderQr(token, studentUrl, qrDataUrl) {
+      if (!token || !studentUrl) return;
+      qrMount.innerHTML = '<div class="qr-box"><div><b>Тимчасова сторінка студента</b><div class="short-link">/s/' + escapeHtmlClient(token) + '</div><small>QR вже готовий. Скануйте телефоном, повний URL не потрібно переписувати вручну.</small></div><img class="qr-frame" src="' + escapeHtmlClient(qrDataUrl || ('https://api.qrserver.com/v1/create-qr-code/?size=190x190&data=' + encodeURIComponent(studentUrl))) + '" alt="QR"></div>';
+    }
+    function goBackToRegistration() {
+      if (returnUrl && !uploadInProgress) window.location.href = returnUrl;
+    }
+    function resetIdleTimer() {
+      if (!returnUrl) return;
+      window.clearTimeout(idleTimer);
+      idleTimer = window.setTimeout(goBackToRegistration, 15000);
+      idleNote.textContent = 'Якщо сторінку не чіпати 15 секунд, вона повернеться до головного екрана запису.';
+    }
+    ['click', 'keydown', 'mousemove', 'mousedown', 'touchstart'].forEach((eventName) => {
+      window.addEventListener(eventName, resetIdleTimer, { passive: true });
+    });
+    resetIdleTimer();
     if (copyZoomBtn) copyZoomBtn.addEventListener('click', () => navigator.clipboard?.writeText(${JSON.stringify(identity.zoomUrl)}));
     form.addEventListener('submit', (event) => {
       event.preventDefault();
       const data = new FormData(form);
       const file = document.getElementById('presentationInput').files[0];
       if (!file) return;
+      uploadInProgress = true;
+      window.clearTimeout(idleTimer);
       uploadBtn.disabled = true;
       progressWrap.style.display = 'block';
       confirmBtn.style.display = 'none';
       statusBox.innerHTML = '';
+      qrMount.innerHTML = '';
       progressBar.style.width = '0%';
       progressText.textContent = 'Завантаження: 0%';
 
@@ -164,6 +221,7 @@ function renderUploadPage({ identity, error = '', success = false, presentation 
         progressText.textContent = 'Завантаження: ' + percent + '%';
       };
       xhr.onload = () => {
+        uploadInProgress = false;
         uploadBtn.disabled = false;
         let payload = {};
         try { payload = JSON.parse(xhr.responseText || '{}'); } catch {}
@@ -172,16 +230,22 @@ function renderUploadPage({ identity, error = '', success = false, presentation 
           progressText.textContent = 'Файл завантажено. Натисніть “Підтвердити запис”.';
           const name = payload.presentation?.fileName || file.name;
           statusBox.innerHTML = '<div class="ok"><b>Презентацію прийнято.</b><br>' + escapeHtmlClient(name) + '</div>';
+          const token = payload.presentation?.token;
+          renderQr(token, payload.presentation?.studentUrl || (token ? buildStudentUrl(token) : ''), payload.presentation?.qrDataUrl || '');
           confirmBtn.style.display = 'inline-block';
+          resetIdleTimer();
           return;
         }
         statusBox.innerHTML = '<div class="error"><b>Не вдалося завантажити презентацію.</b><br>' + escapeHtmlClient(payload.error || ('HTTP ' + xhr.status)) + '</div>';
         progressText.textContent = 'Помилка завантаження.';
+        resetIdleTimer();
       };
       xhr.onerror = () => {
+        uploadInProgress = false;
         uploadBtn.disabled = false;
         statusBox.innerHTML = '<div class="error"><b>Не вдалося завантажити презентацію.</b><br>Немає з’єднання з локальним Agent.</div>';
         progressText.textContent = 'Помилка мережі.';
+        resetIdleTimer();
       };
       xhr.send(data);
     });
@@ -274,27 +338,27 @@ function startUploadServer({ port, onUploaded }) {
     res.json({ ok: true, app: 'DEK Defense Station' });
   });
 
-  app.get('/upload-page', (req, res) => {
-    res.type('html').send(renderUploadPage({ identity: readUploadIdentity(req) }));
+  app.get('/upload-page', async (req, res) => {
+    res.type('html').send(await renderUploadPage({ identity: readUploadIdentity(req) }));
   });
 
   app.post('/upload-page', (req, res) => {
     uploadFields(req, res, async (uploadError) => {
       const identity = readUploadIdentity(req);
       if (uploadError) {
-        res.status(400).type('html').send(renderUploadPage({ identity, error: uploadError.message }));
+        res.status(400).type('html').send(await renderUploadPage({ identity, error: uploadError.message }));
         return;
       }
       try {
         const payload = buildUploadPayload(req);
         const processed = await onUploaded?.(payload);
-        res.type('html').send(renderUploadPage({
+        res.type('html').send(await renderUploadPage({
           identity,
           success: true,
           presentation: { ...payload, ...(processed || {}) }
         }));
       } catch (error) {
-        res.status(500).type('html').send(renderUploadPage({ identity, error: error.message }));
+        res.status(500).type('html').send(await renderUploadPage({ identity, error: error.message }));
       }
     });
   });
@@ -308,7 +372,10 @@ function startUploadServer({ port, onUploaded }) {
       try {
         const payload = buildUploadPayload(req);
         const processed = await onUploaded?.(payload);
-        res.json({ ok: true, presentation: { ...payload, ...(processed || {}), localPath: undefined } });
+        const token = processed?.token || '';
+        const studentUrl = buildStudentTemporaryUrl(token);
+        const qrDataUrl = studentUrl ? await QRCode.toDataURL(studentUrl, { width: 190, margin: 1, errorCorrectionLevel: 'M' }) : '';
+        res.json({ ok: true, presentation: { ...payload, ...(processed || {}), studentUrl, qrDataUrl, localPath: undefined } });
       } catch (error) {
         res.status(500).json({ ok: false, error: error.message });
       }

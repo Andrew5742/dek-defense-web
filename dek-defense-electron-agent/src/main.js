@@ -506,6 +506,20 @@ ipcMain.handle('agent:open-zoom', async (_, zoomUrl) => {
   await openZoomMeeting(shell, zoomUrl || ZOOM_URL);
 });
 
+ipcMain.handle('agent:set-kiosk-mode', async (_, enabled) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setKiosk(Boolean(enabled));
+    mainWindow.setFullScreen(Boolean(enabled));
+    if (enabled) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.moveTop();
+      mainWindow.focus();
+    }
+  }
+  return true;
+});
+
 ipcMain.handle('agent:close-presentation', async (_, password) => {
   if (password !== '0987Kiis') throw new Error('Неправильний пароль');
   await closePresentationFullscreen();

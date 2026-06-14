@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('dekAgent', {
   getStatus: () => ipcRenderer.invoke('agent:get-status'),
   openStorage: () => ipcRenderer.invoke('agent:open-storage'),
   openZoom: (zoomUrl) => ipcRenderer.invoke('agent:open-zoom', zoomUrl),
+  setKioskMode: (enabled) => ipcRenderer.invoke('agent:set-kiosk-mode', enabled),
   closePresentation: (password) => ipcRenderer.invoke('agent:close-presentation', password),
   on: (channel, callback) => {
     const allowed = [

@@ -333,6 +333,7 @@ class FirestoreAgent {
     const existingQueueItem = base.queue.find((item) => item.sessionId === payload.sessionId && item.studentId === payload.studentId);
     const queuePosition = existingQueueItem?.position || Math.max(0, ...currentQueue.map((item) => Number(item.position) || 0)) + 1;
     const presentationStatus = processed.status || 'ready';
+    const studentToken = existingStudent?.token || uid('token');
     const presentation = {
       id: presentationId,
       sessionId: payload.sessionId,
@@ -354,7 +355,7 @@ class FirestoreAgent {
       activeSessionId: base.activeSessionId || payload.sessionId,
       students: base.students.map((student) => student.id === payload.studentId ? {
         ...student,
-        token: student.token || uid('token'),
+        token: student.token || studentToken,
         registrationConfirmed: student.registrationConfirmed === true,
         registrationStatus: 'registered',
         registeredAt: student.registeredAt || now,
@@ -394,6 +395,7 @@ class FirestoreAgent {
       updatedAt: serverTimestamp()
     }, { merge: true });
     await this.updatePublicMobileDocs(next);
+    return { token: studentToken, queuePosition };
   }
 
   async updatePublicMobileDocs(state) {
@@ -431,8 +433,8 @@ class FirestoreAgent {
     this.sendToRenderer('presentation-uploaded', payload);
     if (isPdf) {
       const processed = { status: 'ready', convertedPdfReady: true };
-      await this.updateAppStateAfterUpload(payload, processed);
-      return processed;
+      const publicInfo = await this.updateAppStateAfterUpload(payload, processed);
+      return { ...processed, ...publicInfo };
     }
 
     if (!isPdf) {
@@ -455,8 +457,8 @@ class FirestoreAgent {
         });
         this.sendToRenderer('presentation-converted', { ...payload, convertedPdfName, directOpenFallback: prepared.kind !== 'pdf' });
         const processed = { status: 'ready', convertedPdfReady: prepared.kind === 'pdf', convertedPdfName, directOpenFallback: prepared.kind !== 'pdf', errorMessage: prepared.conversionError };
-        await this.updateAppStateAfterUpload(payload, processed);
-        return processed;
+        const publicInfo = await this.updateAppStateAfterUpload(payload, processed);
+        return { ...processed, ...publicInfo };
       } catch (error) {
         await this.updatePresentation(payload.sessionId, payload.studentId, {
           status: 'ready',
@@ -472,8 +474,8 @@ class FirestoreAgent {
         });
         this.sendToRenderer('agent-error', { error: error.message });
         const processed = { status: 'ready', convertedPdfReady: false, directOpenFallback: true, errorMessage: error.message };
-        await this.updateAppStateAfterUpload(payload, processed);
-        return processed;
+        const publicInfo = await this.updateAppStateAfterUpload(payload, processed);
+        return { ...processed, ...publicInfo };
       }
     }
   }

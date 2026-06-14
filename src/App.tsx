@@ -44,6 +44,7 @@ function writeDesktopUrl(page: Page) {
 }
 
 function requestAppFullscreen() {
+  void window.dekAgent?.setKioskMode?.(true).catch(() => {})
   document.documentElement.requestFullscreen?.().catch(() => {})
 }
 
@@ -244,6 +245,7 @@ function DefenseApp() {
   }
 
   function exitDisplayMode() {
+    void window.dekAgent?.setKioskMode?.(false).catch(() => {})
     localStorage.removeItem(DISPLAY_LOCK_KEY)
     localStorage.removeItem(STUDENT_LOCK_KEY)
     setDisplayLocked(false)

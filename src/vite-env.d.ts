@@ -13,6 +13,7 @@ interface Window {
     }>
     openStorage?: () => Promise<void>
     openZoom?: (zoomUrl?: string) => Promise<void>
+    setKioskMode?: (enabled: boolean) => Promise<boolean>
     closePresentation?: (password: string) => Promise<boolean>
     on?: (channel: string, callback: (payload: unknown) => void) => void
   }

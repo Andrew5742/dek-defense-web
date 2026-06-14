@@ -5,6 +5,8 @@ dist/
 **/release/
 **/out/
 _gh_pages_deploy/
+.firebase/
 .env.local
+.env.production
 dek-defense-electron-agent/.env
 .DS_Store

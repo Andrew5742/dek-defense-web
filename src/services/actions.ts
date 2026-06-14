@@ -148,6 +148,8 @@ export function createContinuationSession(state: AppState, sourceSessionId: stri
     return {
       ...student,
       id: uid('student'),
+      token: uid('token'),
+      registrationConfirmed: false,
       sessionId: session.id,
       groupId: group?.id || student.groupId,
       registrationStatus: 'not_registered',
@@ -309,6 +311,8 @@ export function confirmImportReview(state: AppState, reviewId: string): AppState
       const group = ensureGroup(groupName)
       return {
       id: uid('student'),
+      token: uid('token'),
+      registrationConfirmed: false,
       sessionId: review.sessionId,
       groupId: group.id,
       groupName: draft.groupName || groupName,
@@ -504,6 +508,34 @@ export function reorderQueue(state: AppState, sessionId: string, studentId: stri
     actor: 'admin',
     message: 'Змінено порядок черги',
     payload: { studentId, direction }
+  })
+}
+
+export function makeNextInQueue(state: AppState, sessionId: string, studentId: string): AppState {
+  const sessionQueue = state.queue.filter((q) => q.sessionId === sessionId).sort((a, b) => a.position - b.position)
+  const idx = sessionQueue.findIndex((q) => q.studentId === studentId)
+  if (idx <= 0) return state
+
+  const firstStudent = state.students.find(s => s.id === sessionQueue[0].studentId)
+  const insertIdx = firstStudent?.defenseStatus === 'presenting' ? 1 : 0
+
+  if (idx === insertIdx) return state
+
+  const item = sessionQueue.splice(idx, 1)[0]
+  sessionQueue.splice(insertIdx, 0, item)
+
+  const updatedQueue = state.queue.map(q => {
+    if (q.sessionId !== sessionId) return q
+    const newPosIdx = sessionQueue.findIndex(sq => sq.id === q.id)
+    return { ...q, position: newPosIdx + 1, updatedAt: nowIso() }
+  })
+
+  return addEvent({ ...state, queue: updatedQueue }, {
+    sessionId,
+    type: 'QUEUE_REORDERED',
+    actor: 'admin',
+    message: 'Студента перенесено на початок черги',
+    payload: { studentId }
   })
 }
 

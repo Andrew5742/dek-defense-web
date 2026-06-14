@@ -63,6 +63,8 @@ export function StudentPage({ state, setState, activeSession, publicMode = false
   const selectedAgentUploadPageUrl = selected ? getAgentUploadPageUrl(state, selected) || desktopUploadPageUrl : undefined
   const selectedQueueItem = selected ? state.queue.find((item) => item.sessionId === selected.sessionId && item.studentId === selected.id) : undefined
   const selectedHasPresentation = selected?.presentationStatus === 'ready' || selected?.presentationStatus === 'conversion_required'
+  const companionToken = selected?.token || selected?.id || ''
+  const companionUrl = `${import.meta.env.VITE_PUBLIC_APP_URL || window.location.origin}/s/${companionToken}`
 
   function patchSelected(patch: Partial<Student>) {
     if (!selected) return
@@ -131,12 +133,21 @@ export function StudentPage({ state, setState, activeSession, publicMode = false
             <b>Zoom для демонстрації:</b>
             <a href={activeSession.zoomUrl} target="_blank" rel="noreferrer">{activeSession.zoomUrl}</a>
             <button type="button" onClick={() => navigator.clipboard?.writeText(activeSession.zoomUrl || '')}>Скопіювати</button>
-            <img alt="QR Zoom" src={`https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(activeSession.zoomUrl)}`} />
             <small>Можна відсканувати QR телефоном і переслати посилання собі в месенджер.</small>
           </div>}
 
-          {selectedQueueItem && selectedHasPresentation
-            ? <div className="ok-box">Запис підтверджено: презентація є, місце в черзі збережено.</div>
+          {selectedQueueItem && selectedHasPresentation && selected.registrationConfirmed
+            ? <div className="ok-box">Запис повністю підтверджено: презентація є, мобільна сторінка відкрита. Місце в черзі збережено.</div>
+            : selectedQueueItem && selectedHasPresentation && !selected.registrationConfirmed
+            ? <div className="qr-confirm-box" style={{ textAlign: 'center', background: '#0f172a', color: 'white', padding: 32, marginTop: 24, border: '1px solid #334155' }}>
+                <h2 style={{ margin: '0 0 16px', fontSize: 24, color: '#4ade80' }}>Презентацію завантажено</h2>
+                <div style={{ background: 'white', padding: 16, display: 'inline-block', marginBottom: 24 }}>
+                  <img alt="Mobile QR" src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(companionUrl)}`} style={{ display: 'block' }} />
+                </div>
+                <div style={{ background: '#b91c1c', padding: 16, fontSize: 20, fontWeight: 'bold' }}>Для завершення запису обов'язково відскануйте QR-код!</div>
+                <p style={{ color: '#94a3b8', fontSize: 14, maxWidth: 400, margin: '16px auto 0', lineHeight: 1.5 }}>Без відкриття цієї сторінки запис не буде підтверджено. На ній буде ваш номер черги, поточний статус захисту та подальші вказівки комісії.</p>
+                <div style={{ marginTop: 16, color: '#475569', fontSize: 13, fontFamily: 'monospace' }}>Тимчасова сторінка /s/{companionToken.slice(0, 8)}</div>
+              </div>
             : selectedAgentUploadPageUrl
               ? <p><button type="button" onClick={() => { window.location.href = selectedAgentUploadPageUrl }}>Відкрити завантаження через Electron Agent</button></p>
               : <div className="closed-box">Electron Agent ще не передав адресу завантаження. Перевірте, що desktop-апка запущена саме на ПК захисту.</div>}

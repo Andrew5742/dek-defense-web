@@ -56,7 +56,6 @@ function renderUploadPage({ identity, error = '', success = false, presentation 
         <b>Zoom meeting</b>
         <a href="${escapeHtml(identity.zoomUrl)}">${escapeHtml(identity.zoomUrl)}</a>
         <button type="button" id="copyZoomBtn">Скопіювати Zoom link</button>
-        <img alt="QR Zoom" src="https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(identity.zoomUrl)}">
         <small>QR можна відсканувати телефоном і переслати посилання собі в месенджер.</small>
       </div>`
     : '';

@@ -43,6 +43,61 @@ function withoutUndefined(value) {
   return value;
 }
 
+function publicQueueItems(state, session) {
+  const studentById = new Map((state.students || []).map((student) => [student.id, student]));
+  return (state.queue || [])
+    .filter((item) => item.sessionId === session.id)
+    .sort((a, b) => (Number(a.position) || 0) - (Number(b.position) || 0))
+    .map((queue) => ({ queue, student: studentById.get(queue.studentId) }))
+    .filter((item) => item.student && !['defended', 'absent', 'problem'].includes(item.student.defenseStatus));
+}
+
+function buildPublicStudentPage(student, queueItem) {
+  const token = student.token || student.id;
+  return {
+    token,
+    studentId: student.id,
+    sessionId: student.sessionId,
+    fullName: student.fullName || '',
+    groupName: student.groupName || '',
+    thesisTitle: student.thesisTitleEdited || student.thesisTitleOriginal || '',
+    queuePosition: queueItem?.position || student.queuePosition || null,
+    registrationConfirmed: student.registrationConfirmed === true,
+    defenseStatus: student.defenseStatus || 'waiting',
+    presentationStatus: student.presentationStatus || 'missing',
+    wantsZoomDemo: student.wantsZoomDemo === true,
+    problemDetails: student.problemDetails || null,
+    updatedAt: student.updatedAt || nowIso()
+  };
+}
+
+function buildPublicMobileDisplay(state, session) {
+  const settings = session.mobileDisplaySettings || {
+    enabled: true,
+    currentlyDefendingCount: 5,
+    nextDefendingCount: 7,
+    publicMessage: ''
+  };
+  const queue = publicQueueItems(state, session);
+  const currentCount = Number(settings.currentlyDefendingCount) || 5;
+  const nextCount = Number(settings.nextDefendingCount) || 7;
+  const toPublic = (item) => ({
+    studentId: item.student.id,
+    fullName: item.student.fullName || '',
+    groupName: item.student.groupName || '',
+    position: Number(item.queue.position) || 0
+  });
+  return {
+    sessionId: session.id,
+    enabled: settings.enabled !== false,
+    publicMessage: settings.publicMessage || '',
+    zoomUrl: session.zoomUrl || '',
+    currentlyDefending: queue.slice(0, currentCount).map(toPublic),
+    nextDefending: queue.slice(currentCount, currentCount + nextCount).map(toPublic),
+    updatedAt: session.updatedAt || nowIso()
+  };
+}
+
 class FirestoreAgent {
   constructor({ firebase, stationId, stationName, uploadUrl, lanUploadUrl, zoomUrl, sendToRenderer, openPdfFullscreen, openPresentationFullscreen, openUploadPage, openDisplayFullscreen, closeDisplayFullscreen, closePresentationFullscreen }) {
     this.firebase = firebase;
@@ -299,6 +354,8 @@ class FirestoreAgent {
       activeSessionId: base.activeSessionId || payload.sessionId,
       students: base.students.map((student) => student.id === payload.studentId ? {
         ...student,
+        token: student.token || uid('token'),
+        registrationConfirmed: student.registrationConfirmed === true,
         registrationStatus: 'registered',
         registeredAt: student.registeredAt || now,
         presentationStatus,
@@ -336,6 +393,19 @@ class FirestoreAgent {
       state: withoutUndefined(next),
       updatedAt: serverTimestamp()
     }, { merge: true });
+    await this.updatePublicMobileDocs(next);
+  }
+
+  async updatePublicMobileDocs(state) {
+    const { doc, setDoc } = this.firebase;
+    const queueByStudent = new Map((state.queue || []).map((item) => [item.studentId, item]));
+    for (const student of state.students || []) {
+      const page = buildPublicStudentPage(student, queueByStudent.get(student.id));
+      await setDoc(doc(this.db, 'student_pages', page.token), withoutUndefined(page), { merge: true });
+    }
+    for (const session of state.sessions || []) {
+      await setDoc(doc(this.db, 'mobile_display', session.id), withoutUndefined(buildPublicMobileDisplay(state, session)), { merge: true });
+    }
   }
 
   async onUploaded(payload) {

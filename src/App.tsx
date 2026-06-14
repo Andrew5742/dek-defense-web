@@ -7,6 +7,7 @@ import { AdminPage } from './pages/AdminPage'
 import { StudentPage } from './pages/StudentPage'
 import { DisplayPage } from './pages/DisplayPage'
 import { AgentPage } from './pages/AgentPage'
+import { MobileCompanionPage } from './pages/MobileCompanionPage'
 
 type Page = 'admin' | 'student' | 'display' | 'agent'
 
@@ -155,7 +156,7 @@ function FullscreenLockOverlay({ onUnlock, onReturnFullscreen }: { onUnlock: () 
   </div>
 }
 
-export default function App() {
+function DefenseApp() {
   const desktopDefense = isDesktopDefenseRuntime()
   const [state, setStateRaw] = useState<AppState>(emptyState())
   const [loaded, setLoaded] = useState(false)
@@ -318,4 +319,13 @@ export default function App() {
       />}
     </>
   )
+}
+
+export default function App() {
+  const isMobileCompanion = window.location.pathname.startsWith('/s/')
+  if (isMobileCompanion) {
+    const companionToken = window.location.pathname.split('/s/')[1]?.replace(/\/$/, '') || ''
+    return <MobileCompanionPage token={companionToken} />
+  }
+  return <DefenseApp />
 }

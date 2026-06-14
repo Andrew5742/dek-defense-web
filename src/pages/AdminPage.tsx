@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, Fragment } from 'react'
 import type { AppState, DefenseSession, ImportReview, ProtocolRow, ProtocolSnapshot, Student } from '../shared/types'
 import { downloadTextFile, formatLocalDateTime, nowIso } from '../shared/utils'
-import { addManualStudent, addToQueue, confirmImportReview, createContinuationSession, createSession, removeFromQueue, removeSession, removeStudent, reorderQueue, requestOpenPresentation, requestOpenUploadPage, requestOpenZoom, requestShowDisplay, requestStartDefenses, saveImportReview, saveProtocol, setDefenseStatus, setRegistrationLock, updateImportReview, updateSession, updateStudent } from '../services/actions'
+import { addManualStudent, addToQueue, confirmImportReview, createContinuationSession, createSession, removeFromQueue, removeSession, removeStudent, reorderQueue, makeNextInQueue, requestOpenPresentation, requestOpenUploadPage, requestOpenZoom, requestShowDisplay, requestStartDefenses, saveImportReview, saveProtocol, setDefenseStatus, setRegistrationLock, updateImportReview, updateSession, updateStudent } from '../services/actions'
 import { importDocx, importFromPastedText } from '../services/importService'
 import { isFirebaseEnabled } from '../services/firebaseAdapter'
 import { StatusBadge } from '../components/StatusBadge'
@@ -310,6 +310,7 @@ function StudentsPanel({ state, setState, session, onEdit }: { state: AppState; 
 }
 
 function QueuePanel({ state, setState, session, onEdit }: { state: AppState; setState: (s: AppState) => void; session: DefenseSession; onEdit: (s: Student) => void }) {
+  const [showQrToken, setShowQrToken] = useState<string | null>(null)
   const queue = state.queue.filter((q) => q.sessionId === session.id).sort((a, b) => a.position - b.position)
   const students = state.students.filter((s) => s.sessionId === session.id)
   const byId = new Map(students.map((s) => [s.id, s]))
@@ -331,50 +332,105 @@ function QueuePanel({ state, setState, session, onEdit }: { state: AppState; set
       <button onClick={() => printStudentsReport(`Захистилися ${session.date}`, defended, { includeNotes: true })}>PDF захистилися за день</button>
       <button onClick={() => downloadTextFile(`backup_${session.date}.json`, JSON.stringify(state, null, 2))}>Експорт backup</button>
     </div>
+    <div className="panel" style={{ border: '1px solid #334155', background: '#0f172a', padding: 16, marginBottom: 16 }}>
+      <h2 style={{ marginTop: 0, borderBottom: '1px solid #334155', paddingBottom: 8, color: '#f8fafc' }}>Налаштування Mobile Display</h2>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
+        <label>
+          <span style={{ display: 'block', marginBottom: 4, color: '#cbd5e1', fontSize: 14 }}>Статус публічного mobile display</span>
+          <select value={session.mobileDisplaySettings?.enabled === false ? 'off' : 'on'} onChange={(e) => setState(updateSession(state, session.id, { mobileDisplaySettings: { ...(session.mobileDisplaySettings || { currentlyDefendingCount: 5, nextDefendingCount: 7, publicMessage: '' }), enabled: e.target.value === 'on' } }))} style={{ padding: '6px 8px', width: '100%', background: '#1e293b', color: 'white', border: '1px solid #475569' }}>
+            <option value="on">Увімкнено</option>
+            <option value="off">Вимкнено</option>
+          </select>
+        </label>
+        <label>
+          <span style={{ display: 'block', marginBottom: 4, color: '#cbd5e1', fontSize: 14 }}>Студентів у "Зараз захищаються"</span>
+          <input type="number" min={1} max={10} value={session.mobileDisplaySettings?.currentlyDefendingCount ?? 5} onChange={(e) => setState(updateSession(state, session.id, { mobileDisplaySettings: { ...(session.mobileDisplaySettings || { enabled: true, nextDefendingCount: 7, publicMessage: '' }), currentlyDefendingCount: parseInt(e.target.value, 10) || 5 } }))} style={{ padding: '6px 8px', width: '100%', background: '#1e293b', color: 'white', border: '1px solid #475569' }} />
+        </label>
+        <label>
+          <span style={{ display: 'block', marginBottom: 4, color: '#cbd5e1', fontSize: 14 }}>Студентів у "Готуються наступні"</span>
+          <input type="number" min={1} max={20} value={session.mobileDisplaySettings?.nextDefendingCount ?? 7} onChange={(e) => setState(updateSession(state, session.id, { mobileDisplaySettings: { ...(session.mobileDisplaySettings || { enabled: true, currentlyDefendingCount: 5, publicMessage: '' }), nextDefendingCount: parseInt(e.target.value, 10) || 7 } }))} style={{ padding: '6px 8px', width: '100%', background: '#1e293b', color: 'white', border: '1px solid #475569' }} />
+        </label>
+        <label style={{ gridColumn: '1 / -1' }}>
+          <span style={{ display: 'block', marginBottom: 4, color: '#cbd5e1', fontSize: 14 }}>Zoom-посилання</span>
+          <input value={session.zoomUrl || ''} onChange={(e) => setState(updateSession(state, session.id, { zoomUrl: e.target.value }))} style={{ width: '100%', padding: '6px 8px', background: '#1e293b', color: 'white', border: '1px solid #475569' }} />
+        </label>
+        <label style={{ gridColumn: '1 / -1' }}>
+          <span style={{ display: 'block', marginBottom: 4, color: '#cbd5e1', fontSize: 14 }}>Публічне повідомлення (відображається на сторінках студентів)</span>
+          <textarea value={session.mobileDisplaySettings?.publicMessage || ''} onChange={(e) => setState(updateSession(state, session.id, { mobileDisplaySettings: { ...(session.mobileDisplaySettings || { enabled: true, currentlyDefendingCount: 5, nextDefendingCount: 7 }), publicMessage: e.target.value } }))} style={{ width: '100%', minHeight: 60, padding: '8px', background: '#1e293b', color: 'white', border: '1px solid #475569', fontFamily: 'inherit' }} placeholder="Наприклад: Технічна перерва на 15 хвилин" />
+        </label>
+      </div>
+    </div>
     <div className="panel">
       <h2>Поточна черга</h2>
       <table>
-        <thead><tr><th>№</th><th>ПІБ</th><th>Формат</th><th>Преза</th><th>Захист</th><th>Дані протоколу</th><th>Дії</th></tr></thead>
+        <thead><tr><th style={{width: 40}}>№</th><th>ПІБ, Група</th><th>Формат</th><th>Презентація</th><th>QR / Сторінка</th><th>Захист</th><th>Дії</th></tr></thead>
         <tbody>{queue.map((q) => {
           const s = byId.get(q.studentId); if (!s) return null
-          return <tr key={q.id}>
-            <td>{q.position}</td>
-            <td><b>{s.fullName}</b><br/><small>{s.groupName} · {s.thesisTitleEdited}</small></td>
-            <td><StatusBadge value={s.defenseFormat || 'offline'} /><br/><button className="small-action" onClick={() => setState(updateStudent(state, s.id, { defenseFormat: (s.defenseFormat || 'offline') === 'online' ? 'offline' : 'online' }))}>{(s.defenseFormat || 'offline') === 'online' ? 'Зробити очно' : 'Зробити онлайн'}</button></td>
-            <td><StatusBadge value={s.presentationStatus} /> {s.hasVideo && <span className="status info">відео</span>} {s.wantsZoomDemo && <span className="status info">показ результату в Zoom</span>}</td>
-            <td><StatusBadge value={s.defenseStatus} /></td>
-            <td>
-              <div className="protocol-fields">
-                <label>Стор.<input value={s.pagesCount || ''} onChange={(e) => patchProtocolFields(s, { pagesCount: e.target.value })} /></label>
-                <label>Кресл.<input value={s.drawingsCount || ''} onChange={(e) => patchProtocolFields(s, { drawingsCount: e.target.value })} /></label>
-                <label>Рівень<input value={s.workLevel || ''} onChange={(e) => patchProtocolFields(s, { workLevel: e.target.value })} placeholder="достатньому" /></label>
-                <label>Оц. рец.<input value={s.reviewerGrade || ''} onChange={(e) => patchProtocolFields(s, { reviewerGrade: e.target.value })} /></label>
-                <label>Оц. роботи<input value={s.projectGrade || ''} onChange={(e) => patchProtocolFields(s, { projectGrade: e.target.value })} /></label>
-              </div>
-            </td>
-            <td className="actions">
-              <button onClick={() => setState(reorderQueue(state, session.id, s.id, -1))}>↑</button>
-              <button onClick={() => setState(reorderQueue(state, session.id, s.id, 1))}>↓</button>
-              <button onClick={() => setState(requestOpenPresentation(state, session.id, s.id))}>{(s.defenseFormat || 'offline') === 'online' ? 'Відкрити Zoom' : 'Відкрити презу'}</button>
-              {s.wantsZoomDemo && <button onClick={() => setState(requestOpenZoom(state, session.id, s.id))}>Відкрити Zoom demo</button>}
-              <button onClick={() => setState(requestOpenUploadPage(state, session.id, s.id))}>Завантажити презу</button>
-              <button onClick={() => setState(requestShowDisplay(state, session.id))}>Повернути Display</button>
-              <button onClick={() => setState(setDefenseStatus(state, s.id, 'defended'))}>Захистився</button>
-              <button onClick={() => setState(removeFromQueue(setDefenseStatus(state, s.id, 'defended'), session.id, s.id))}>Захистився + прибрати</button>
-              <button onClick={() => setState(setDefenseStatus(state, s.id, 'absent'))}>Відсутній</button>
-              <button onClick={() => {
-                const note = prompt('Опишіть проблему захисту')?.trim()
-                if (note === undefined) return
-                const withNote = note ? updateStudent(state, s.id, { notes: [s.notes, note].filter(Boolean).join('\n') }) : state
-                setState(setDefenseStatus(withNote, s.id, 'problem'))
-              }}>Проблема</button>
-              <button onClick={() => onEdit(s)}>Ред.</button>
-              <button onClick={() => setState(removeFromQueue(state, session.id, s.id))}>Прибрати з черги</button>
-              <button className="danger" onClick={() => {
-                if (confirm(`Видалити студента з системи?\n\n${s.fullName}\n\nБуде прибрано з черги, протоколів і статусів презентації.`)) setState(removeStudent(state, s.id))
-              }}>Видалити</button>
-            </td>
-          </tr>
+          const hasPresentation = s.presentationStatus === 'ready' || s.presentationStatus === 'conversion_required'
+          const qrStatus = !hasPresentation ? 'Не створено' : s.registrationConfirmed ? 'Відкрито' : 'Створено'
+          return <Fragment key={q.id}>
+            <tr className={s.defenseStatus === 'presenting' ? 'active-row' : ''}>
+              <td>{q.position}</td>
+              <td><b>{s.fullName}</b><br/><small>{s.groupName}</small></td>
+              <td><StatusBadge value={s.defenseFormat || 'offline'} /></td>
+              <td><StatusBadge value={s.presentationStatus} /></td>
+              <td><span style={{ color: s.registrationConfirmed ? '#059669' : hasPresentation ? '#d97706' : '#94a3b8', fontWeight: 'bold' }}>{qrStatus}</span></td>
+              <td><StatusBadge value={s.defenseStatus} /></td>
+              <td className="actions" style={{ display: 'flex', flexWrap: 'wrap', gap: 4, maxWidth: 300 }}>
+                <button disabled={!hasPresentation} onClick={() => setShowQrToken(showQrToken === s.id ? null : s.id)}>Показати QR</button>
+                <button onClick={() => {
+                  const token = s.token || s.id;
+                  const url = `${import.meta.env.VITE_PUBLIC_APP_URL || window.location.origin}/s/${token}`;
+                  navigator.clipboard?.writeText(url).catch(() => alert(`URL: ${url}`));
+                }}>Скопіювати лінк</button>
+                <button onClick={() => setState(makeNextInQueue(state, session.id, s.id))}>Поставити наступним</button>
+                <button onClick={() => setState(reorderQueue(state, session.id, s.id, 1))}>Перенести нижче</button>
+                <button onClick={() => setState(requestOpenPresentation(state, session.id, s.id))}>Відкрити презентацію</button>
+                {(s.defenseFormat || 'offline') === 'online' && <button onClick={() => setState(requestOpenZoom(state, session.id, s.id))}>Відкрити Zoom</button>}
+                <button onClick={() => setState(setDefenseStatus(state, s.id, 'presenting'))}>Захищається</button>
+                <button onClick={() => setState(setDefenseStatus(state, s.id, 'defended'))}>Захистився</button>
+                <button onClick={() => setState(setDefenseStatus(state, s.id, 'problem'))}>Проблема</button>
+                <button onClick={() => setState(setDefenseStatus(state, s.id, 'absent'))}>Відсутній</button>
+                <button onClick={() => onEdit(s)}>Ред.</button>
+                <button onClick={() => setState(removeFromQueue(state, session.id, s.id))} className="danger">З черги</button>
+              </td>
+            </tr>
+            {showQrToken === s.id && hasPresentation && (
+              <tr>
+                <td colSpan={7} style={{ background: '#f8fafc', padding: 20, textAlign: 'center', borderBottom: '2px solid #cbd5e1' }}>
+                  <div style={{ display: 'inline-block', background: 'white', padding: 16, border: '1px solid #e2e8f0' }}>
+                    <img alt="QR" src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`${import.meta.env.VITE_PUBLIC_APP_URL || window.location.origin}/s/${s.token || s.id}`)}`} />
+                  </div>
+                  <div style={{ marginTop: 12 }}>
+                    <button className="primary" onClick={() => setShowQrToken(null)}>Закрити QR</button>
+                  </div>
+                </td>
+              </tr>
+            )}
+            {s.defenseStatus === 'problem' && (
+              <tr>
+                <td colSpan={7} style={{ background: '#fef2f2', padding: 12, borderBottom: '2px solid #fca5a5' }}>
+                  <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
+                    <div style={{ flex: 1 }}>
+                      <label style={{ display: 'block', marginBottom: 8, fontWeight: 'bold', color: '#991b1b' }}>Зауваження (відобразиться у студента):
+                        <textarea style={{ width: '100%', minHeight: 60, padding: 8, marginTop: 4, border: '1px solid #fca5a5', borderRadius: 4 }} value={s.problemDetails?.note || ''} onChange={(e) => setState(updateStudent(state, s.id, { problemDetails: { ...s.problemDetails, note: e.target.value, resolved: false, returnedToStudent: s.problemDetails?.returnedToStudent || false, deadline: s.problemDetails?.deadline || '' } }))} placeholder="Вкажіть, що треба виправити" />
+                      </label>
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <label style={{ display: 'block', marginBottom: 12, cursor: 'pointer', fontWeight: 'bold' }}>
+                        <input type="checkbox" checked={s.problemDetails?.returnedToStudent || false} onChange={(e) => setState(updateStudent(state, s.id, { problemDetails: { ...s.problemDetails, returnedToStudent: e.target.checked, note: s.problemDetails?.note || '', resolved: false, deadline: s.problemDetails?.deadline || '' } }))} style={{ marginRight: 8 }} />
+                        Роботу передано студенту на руки
+                      </label>
+                      <label style={{ display: 'block', marginBottom: 12, fontWeight: 'bold' }}>Внести правки до:
+                        <input type="datetime-local" style={{ width: '100%', maxWidth: 200, padding: 8, marginTop: 4, border: '1px solid #cbd5e1', borderRadius: 4 }} value={s.problemDetails?.deadline || ''} onChange={(e) => setState(updateStudent(state, s.id, { problemDetails: { ...s.problemDetails, deadline: e.target.value, note: s.problemDetails?.note || '', resolved: false, returnedToStudent: s.problemDetails?.returnedToStudent || false } }))} />
+                      </label>
+                      <button type="button" onClick={() => setState(updateStudent(state, s.id, { defenseStatus: 'defended', problemDetails: { ...s.problemDetails, resolved: true, note: s.problemDetails?.note || '', returnedToStudent: s.problemDetails?.returnedToStudent || false, deadline: s.problemDetails?.deadline || '' } }))} style={{ background: '#059669', color: 'white', border: '1px solid #047857', padding: '8px 16px', borderRadius: 4, cursor: 'pointer', fontWeight: 'bold', width: '100%' }}>Проблеми вирішено / роботу прийнято</button>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            )}
+          </Fragment>
         })}</tbody>
       </table>
     </div>

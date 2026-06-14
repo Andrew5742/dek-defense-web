@@ -1,7 +1,7 @@
 import { initializeApp, type FirebaseApp } from 'firebase/app'
 import { getAuth, signInWithEmailAndPassword, signOut, type Auth, type User } from 'firebase/auth'
 import { collection, doc, getDoc, getDocs, getFirestore, onSnapshot, serverTimestamp, setDoc, writeBatch, type Firestore } from 'firebase/firestore'
-import type { AppRepository, AppState, Command, PresentationMeta, Station } from '../shared/types'
+import type { AppRepository, AppState, Command, DefenseSession, PresentationMeta, QueueItem, Station, Student } from '../shared/types'
 import { emptyState } from '../shared/utils'
 
 export interface FirebaseRuntime {
@@ -38,6 +38,39 @@ const APP_STATE_DOC = 'state'
 const COMMANDS_COLLECTION = 'dek_commands'
 const PRESENTATIONS_COLLECTION = 'dek_presentations'
 const STATIONS_COLLECTION = 'dek_stations'
+const STUDENT_PAGES_COLLECTION = 'student_pages'
+const MOBILE_DISPLAY_COLLECTION = 'mobile_display'
+
+export interface PublicStudentPage {
+  token: string
+  studentId: string
+  sessionId: string
+  fullName: string
+  groupName: string
+  thesisTitle: string
+  queuePosition?: number
+  registrationConfirmed: boolean
+  defenseStatus: Student['defenseStatus']
+  presentationStatus: Student['presentationStatus']
+  wantsZoomDemo?: boolean
+  problemDetails?: Student['problemDetails']
+  updatedAt: string
+}
+
+export interface PublicMobileDisplay {
+  sessionId: string
+  enabled: boolean
+  publicMessage: string
+  zoomUrl: string
+  currentlyDefending: Array<{ studentId: string; fullName: string; groupName: string; position: number }>
+  nextDefending: Array<{ studentId: string; fullName: string; groupName: string; position: number }>
+  updatedAt: string
+}
+
+export interface MobileCompanionSnapshot {
+  studentPage: PublicStudentPage | null
+  mobileDisplay: PublicMobileDisplay | null
+}
 
 function normalizeState(value: unknown): AppState {
   if (!value || typeof value !== 'object') return emptyState()
@@ -222,6 +255,67 @@ function mergeExternalState(base: AppState, external: Partial<AppState>): AppSta
   }
 }
 
+function publicQueueItems(state: AppState, session: DefenseSession) {
+  const studentById = new Map(state.students.map((student) => [student.id, student]))
+  return state.queue
+    .filter((item) => item.sessionId === session.id)
+    .sort((a, b) => a.position - b.position)
+    .map((item) => ({ queue: item, student: studentById.get(item.studentId) }))
+    .filter((item): item is { queue: QueueItem; student: Student } => {
+      const student = item.student
+      if (!student) return false
+      return student.defenseStatus !== 'defended' &&
+        student.defenseStatus !== 'absent' &&
+        student.defenseStatus !== 'problem'
+    })
+}
+
+function buildPublicStudentPage(student: Student, queueItem?: QueueItem): PublicStudentPage | null {
+  const token = student.token || student.id
+  return {
+    token,
+    studentId: student.id,
+    sessionId: student.sessionId,
+    fullName: student.fullName,
+    groupName: student.groupName,
+    thesisTitle: student.thesisTitleEdited,
+    queuePosition: queueItem?.position || student.queuePosition,
+    registrationConfirmed: student.registrationConfirmed === true,
+    defenseStatus: student.defenseStatus,
+    presentationStatus: student.presentationStatus,
+    wantsZoomDemo: student.wantsZoomDemo === true,
+    problemDetails: student.problemDetails,
+    updatedAt: student.updatedAt || new Date().toISOString()
+  }
+}
+
+function buildPublicMobileDisplay(state: AppState, session: DefenseSession): PublicMobileDisplay {
+  const settings = session.mobileDisplaySettings || {
+    enabled: true,
+    currentlyDefendingCount: 5,
+    nextDefendingCount: 7,
+    publicMessage: ''
+  }
+  const queue = publicQueueItems(state, session)
+  const toPublic = (item: { queue: QueueItem; student: Student }) => ({
+    studentId: item.student.id,
+    fullName: item.student.fullName,
+    groupName: item.student.groupName,
+    position: item.queue.position
+  })
+  return {
+    sessionId: session.id,
+    enabled: settings.enabled !== false,
+    publicMessage: settings.publicMessage || '',
+    zoomUrl: session.zoomUrl || '',
+    currentlyDefending: queue.slice(0, settings.currentlyDefendingCount || 5).map(toPublic),
+    nextDefending: queue
+      .slice(settings.currentlyDefendingCount || 5, (settings.currentlyDefendingCount || 5) + (settings.nextDefendingCount || 7))
+      .map(toPublic),
+    updatedAt: session.updatedAt || new Date().toISOString()
+  }
+}
+
 export function isFirebaseEnabled(): boolean {
   return runtime !== null
 }
@@ -288,6 +382,19 @@ export class FirebaseRepository implements AppRepository {
 
     for (const presentation of stateToSave.presentations) {
       batch.set(doc(runtime.db, PRESENTATIONS_COLLECTION, presentation.id), withoutUndefined(presentation), { merge: true })
+      mirroredWrites += 1
+    }
+
+    const queueByStudent = new Map(stateToSave.queue.map((item) => [item.studentId, item]))
+    for (const student of stateToSave.students) {
+      const page = buildPublicStudentPage(student, queueByStudent.get(student.id))
+      if (!page) continue
+      batch.set(doc(runtime.db, STUDENT_PAGES_COLLECTION, page.token), withoutUndefined(page), { merge: true })
+      mirroredWrites += 1
+    }
+
+    for (const session of stateToSave.sessions) {
+      batch.set(doc(runtime.db, MOBILE_DISPLAY_COLLECTION, session.id), withoutUndefined(buildPublicMobileDisplay(stateToSave, session)), { merge: true })
       mirroredWrites += 1
     }
 
@@ -366,6 +473,110 @@ export async function publishFirebaseStatePatch(state: AppState): Promise<void> 
       state: withoutUndefined(state),
       updatedAt: serverTimestamp()
     }, { merge: true })
+}
+
+function normalizePublicStudentPage(value: unknown): PublicStudentPage | null {
+  if (!value || typeof value !== 'object') return null
+  const data = value as Record<string, unknown>
+  if (!data.token || !data.studentId || !data.sessionId) return null
+  return {
+    token: String(data.token),
+    studentId: String(data.studentId),
+    sessionId: String(data.sessionId),
+    fullName: String(data.fullName || ''),
+    groupName: String(data.groupName || ''),
+    thesisTitle: String(data.thesisTitle || ''),
+    queuePosition: data.queuePosition ? Number(data.queuePosition) : undefined,
+    registrationConfirmed: data.registrationConfirmed === true,
+    defenseStatus: (data.defenseStatus as Student['defenseStatus']) || 'waiting',
+    presentationStatus: (data.presentationStatus as Student['presentationStatus']) || 'missing',
+    wantsZoomDemo: data.wantsZoomDemo === true,
+    problemDetails: data.problemDetails as Student['problemDetails'],
+    updatedAt: toIso(data.updatedAt)
+  }
+}
+
+function normalizePublicMobileDisplay(value: unknown): PublicMobileDisplay | null {
+  if (!value || typeof value !== 'object') return null
+  const data = value as Record<string, unknown>
+  if (!data.sessionId) return null
+  const normalizeRows = (rows: unknown) => Array.isArray(rows)
+    ? rows.map((row) => {
+      const item = row as Record<string, unknown>
+      return {
+        studentId: String(item.studentId || ''),
+        fullName: String(item.fullName || ''),
+        groupName: String(item.groupName || ''),
+        position: Number(item.position || 0)
+      }
+    }).filter((row) => row.studentId)
+    : []
+  return {
+    sessionId: String(data.sessionId),
+    enabled: data.enabled !== false,
+    publicMessage: String(data.publicMessage || ''),
+    zoomUrl: String(data.zoomUrl || ''),
+    currentlyDefending: normalizeRows(data.currentlyDefending),
+    nextDefending: normalizeRows(data.nextDefending),
+    updatedAt: toIso(data.updatedAt)
+  }
+}
+
+export function subscribeMobileCompanion(token: string, callback: (snapshot: MobileCompanionSnapshot) => void): () => void {
+  if (!runtime || !token) return () => undefined
+  let studentPage: PublicStudentPage | null = null
+  let mobileDisplay: PublicMobileDisplay | null = null
+  let displayUnsub: (() => void) | undefined
+  const emit = () => callback({ studentPage, mobileDisplay })
+
+  const studentUnsub = onSnapshot(doc(runtime.db, STUDENT_PAGES_COLLECTION, token), (snapshot) => {
+    studentPage = snapshot.exists() ? normalizePublicStudentPage(snapshot.data()) : null
+    displayUnsub?.()
+    displayUnsub = undefined
+    if (studentPage?.sessionId) {
+      displayUnsub = onSnapshot(doc(runtime.db, MOBILE_DISPLAY_COLLECTION, studentPage.sessionId), (displaySnap) => {
+        mobileDisplay = displaySnap.exists() ? normalizePublicMobileDisplay(displaySnap.data()) : null
+        emit()
+      }, (error) => console.warn('Mobile display listener failed', error))
+    } else {
+      mobileDisplay = null
+    }
+    emit()
+  }, (error) => console.warn('Student page listener failed', error))
+
+  return () => {
+    studentUnsub()
+    displayUnsub?.()
+  }
+}
+
+export async function confirmMobileRegistration(token: string): Promise<void> {
+  if (!runtime || !token) return
+  const pageRef = doc(runtime.db, STUDENT_PAGES_COLLECTION, token)
+  const pageSnap = await getDoc(pageRef)
+  if (!pageSnap.exists()) return
+  const page = normalizePublicStudentPage(pageSnap.data())
+  if (!page || page.registrationConfirmed) return
+
+  await setDoc(pageRef, {
+    registrationConfirmed: true,
+    updatedAt: serverTimestamp()
+  }, { merge: true })
+
+  const stateRef = doc(runtime.db, APP_STATE_COLLECTION, APP_STATE_DOC)
+  const stateSnap = await getDoc(stateRef)
+  if (!stateSnap.exists() || !stateSnap.data()?.state) return
+  const state = normalizeState(stateSnap.data().state)
+  const next: AppState = {
+    ...state,
+    students: state.students.map((student) => student.token === token || student.id === page.studentId
+      ? { ...student, registrationConfirmed: true, updatedAt: new Date().toISOString() }
+      : student)
+  }
+  await setDoc(stateRef, {
+    state: withoutUndefined(next),
+    updatedAt: serverTimestamp()
+  }, { merge: true })
 }
 
 export const firebaseRepository = runtime ? new FirebaseRepository() : null

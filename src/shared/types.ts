@@ -27,6 +27,13 @@ export type DefenseStatus =
 
 export type DefenseFormat = 'offline' | 'online'
 
+export interface MobileDisplaySettings {
+  enabled: boolean
+  currentlyDefendingCount: number
+  nextDefendingCount: number
+  publicMessage: string
+}
+
 export type EventType =
   | 'SESSION_CREATED'
   | 'SESSION_UPDATED'
@@ -63,6 +70,7 @@ export interface DefenseSession {
   isRegistrationLocked: boolean
   publicToken: string
   stationId?: string
+  mobileDisplaySettings?: MobileDisplaySettings
   createdAt: string
   updatedAt: string
 }
@@ -107,6 +115,14 @@ export interface Student {
   reviewerGrade?: string
   projectGrade?: string
   notes?: string
+  token?: string
+  registrationConfirmed?: boolean
+  problemDetails?: {
+    note: string
+    returnedToStudent: boolean
+    deadline: string
+    resolved: boolean
+  }
   createdAt: string
   updatedAt: string
 }

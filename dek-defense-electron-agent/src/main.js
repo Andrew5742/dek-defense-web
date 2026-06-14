@@ -26,7 +26,7 @@ const STATION_ID = process.env.STATION_ID || store.get('stationId') || `station-
 const STATION_NAME = process.env.STATION_NAME || 'ПК захисту';
 const UPLOAD_PORT = Number(process.env.UPLOAD_PORT || 3050);
 const ZOOM_URL = process.env.ZOOM_URL || '';
-const WEB_APP_URL = process.env.WEB_APP_URL || 'https://andrew5742.github.io/dek-defense-web/';
+const WEB_APP_URL = process.env.WEB_APP_URL || process.env.VITE_PUBLIC_APP_URL || 'https://<project-id>.web.app/';
 
 store.set('stationId', STATION_ID);
 

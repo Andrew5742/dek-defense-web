@@ -14,6 +14,25 @@ import type {
 import { extOf, isAllowedPresentationExt, normalizeText, nowIso, sanitizeFilePart, uid } from '../shared/utils'
 import { getBlob, saveBlob } from './localRepository'
 
+const MOBILE_PAGE_TTL_MS = 15 * 60 * 1000
+
+function mobilePageExpiresAt(fromIso = nowIso()) {
+  const base = Date.parse(fromIso)
+  return new Date((Number.isFinite(base) ? base : Date.now()) + MOBILE_PAGE_TTL_MS).toISOString()
+}
+
+function applyStudentPatch(student: Student, patch: Partial<Student>): Student {
+  const now = nowIso()
+  const next: Student = { ...student, ...patch, updatedAt: now }
+  if (patch.defenseStatus === 'defended' && !patch.mobilePageExpiresAt && !student.mobilePageExpiresAt) {
+    next.mobilePageExpiresAt = mobilePageExpiresAt(now)
+  }
+  if (patch.defenseStatus && patch.defenseStatus !== 'defended') {
+    next.mobilePageExpiresAt = undefined
+  }
+  return next
+}
+
 export function addEvent(state: AppState, event: Omit<EventLogItem, 'id' | 'createdAt'>): AppState {
   return {
     ...state,
@@ -359,7 +378,7 @@ export function confirmImportReview(state: AppState, reviewId: string): AppState
 export function updateStudent(state: AppState, studentId: string, patch: Partial<Student>, actor: 'admin' | 'student' = 'admin'): AppState {
   const next = {
     ...state,
-    students: state.students.map((s) => (s.id === studentId ? { ...s, ...patch, updatedAt: nowIso() } : s))
+    students: state.students.map((s) => (s.id === studentId ? applyStudentPatch(s, patch) : s))
   }
   const student = next.students.find((s) => s.id === studentId)
   return addEvent(next, {
@@ -914,7 +933,7 @@ export function setDefenseStatus(state: AppState, studentId: string, defenseStat
   if (!student) return state
   let next = addEvent({
     ...state,
-    students: state.students.map((s) => s.id === studentId ? { ...s, defenseStatus, updatedAt: nowIso() } : s)
+    students: state.students.map((s) => s.id === studentId ? applyStudentPatch(s, { defenseStatus }) : s)
   }, {
     sessionId: student.sessionId,
     type: 'DEFENSE_STATUS_CHANGED',

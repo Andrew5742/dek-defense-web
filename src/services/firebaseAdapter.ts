@@ -1,6 +1,6 @@
 import { initializeApp, type FirebaseApp } from 'firebase/app'
 import { getAuth, signInWithEmailAndPassword, signOut, type Auth, type User } from 'firebase/auth'
-import { collection, doc, getDoc, getDocs, getFirestore, onSnapshot, serverTimestamp, setDoc, writeBatch, type Firestore } from 'firebase/firestore'
+import { collection, deleteDoc, doc, getDoc, getDocs, getFirestore, onSnapshot, serverTimestamp, setDoc, writeBatch, type Firestore } from 'firebase/firestore'
 import type { AppRepository, AppState, Command, DefenseSession, PresentationMeta, QueueItem, Station, Student } from '../shared/types'
 import { emptyState } from '../shared/utils'
 
@@ -40,6 +40,7 @@ const PRESENTATIONS_COLLECTION = 'dek_presentations'
 const STATIONS_COLLECTION = 'dek_stations'
 const STUDENT_PAGES_COLLECTION = 'student_pages'
 const MOBILE_DISPLAY_COLLECTION = 'mobile_display'
+const MOBILE_PAGE_TTL_MS = 15 * 60 * 1000
 
 export interface PublicStudentPage {
   token: string
@@ -54,6 +55,7 @@ export interface PublicStudentPage {
   presentationStatus: Student['presentationStatus']
   wantsZoomDemo?: boolean
   problemDetails?: Student['problemDetails']
+  expiresAt?: string
   updatedAt: string
 }
 
@@ -270,7 +272,26 @@ function publicQueueItems(state: AppState, session: DefenseSession) {
     })
 }
 
+function addMs(iso: string | undefined, ms: number): string | undefined {
+  const base = Date.parse(iso || '')
+  if (!Number.isFinite(base)) return undefined
+  return new Date(base + ms).toISOString()
+}
+
+function getStudentPageExpiresAt(student: Student): string | undefined {
+  if (student.defenseStatus !== 'defended') return undefined
+  return student.mobilePageExpiresAt || addMs(student.updatedAt, MOBILE_PAGE_TTL_MS)
+}
+
+function isStudentPageExpired(student: Student, nowMs = Date.now()): boolean {
+  const expiresAt = getStudentPageExpiresAt(student)
+  if (!expiresAt) return false
+  const expiresMs = Date.parse(expiresAt)
+  return Number.isFinite(expiresMs) && expiresMs <= nowMs
+}
+
 function buildPublicStudentPage(student: Student, queueItem?: QueueItem): PublicStudentPage | null {
+  if (isStudentPageExpired(student)) return null
   const token = student.token || student.id
   return {
     token,
@@ -285,6 +306,7 @@ function buildPublicStudentPage(student: Student, queueItem?: QueueItem): Public
     presentationStatus: student.presentationStatus,
     wantsZoomDemo: student.wantsZoomDemo === true,
     problemDetails: student.problemDetails,
+    expiresAt: getStudentPageExpiresAt(student),
     updatedAt: student.updatedAt || new Date().toISOString()
   }
 }
@@ -387,6 +409,12 @@ export class FirebaseRepository implements AppRepository {
 
     const queueByStudent = new Map(stateToSave.queue.map((item) => [item.studentId, item]))
     for (const student of stateToSave.students) {
+      const token = student.token || student.id
+      if (isStudentPageExpired(student)) {
+        batch.delete(doc(runtime.db, STUDENT_PAGES_COLLECTION, token))
+        mirroredWrites += 1
+        continue
+      }
       const page = buildPublicStudentPage(student, queueByStudent.get(student.id))
       if (!page) continue
       batch.set(doc(runtime.db, STUDENT_PAGES_COLLECTION, page.token), withoutUndefined(page), { merge: true })
@@ -492,6 +520,7 @@ function normalizePublicStudentPage(value: unknown): PublicStudentPage | null {
     presentationStatus: (data.presentationStatus as Student['presentationStatus']) || 'missing',
     wantsZoomDemo: data.wantsZoomDemo === true,
     problemDetails: data.problemDetails as Student['problemDetails'],
+    expiresAt: data.expiresAt ? toIso(data.expiresAt) : undefined,
     updatedAt: toIso(data.updatedAt)
   }
 }
@@ -589,6 +618,11 @@ export async function confirmMobileRegistration(token: string): Promise<void> {
     state: withoutUndefined(next),
     updatedAt: serverTimestamp()
   }, { merge: true })
+}
+
+export async function expireMobileStudentPage(token: string): Promise<void> {
+  if (!runtime || !token) return
+  await deleteDoc(doc(runtime.db, STUDENT_PAGES_COLLECTION, token))
 }
 
 export const firebaseRepository = runtime ? new FirebaseRepository() : null

@@ -117,6 +117,7 @@ export interface Student {
   notes?: string
   token?: string
   registrationConfirmed?: boolean
+  mobilePageExpiresAt?: string
   problemDetails?: {
     note: string
     returnedToStudent: boolean

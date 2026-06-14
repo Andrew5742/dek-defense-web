@@ -6,6 +6,7 @@ const { openZoomMeeting } = require('./zoom');
 
 const APP_STATE_COLLECTION = 'dek_app';
 const APP_STATE_DOC = 'state';
+const MOBILE_PAGE_TTL_MS = 15 * 60 * 1000;
 
 function nowIso() {
   return new Date().toISOString();
@@ -43,6 +44,24 @@ function withoutUndefined(value) {
   return value;
 }
 
+function addMs(iso, ms) {
+  const base = Date.parse(iso || '');
+  if (!Number.isFinite(base)) return undefined;
+  return new Date(base + ms).toISOString();
+}
+
+function getStudentPageExpiresAt(student) {
+  if (student.defenseStatus !== 'defended') return undefined;
+  return student.mobilePageExpiresAt || addMs(student.updatedAt, MOBILE_PAGE_TTL_MS);
+}
+
+function isStudentPageExpired(student, nowMs = Date.now()) {
+  const expiresAt = getStudentPageExpiresAt(student);
+  if (!expiresAt) return false;
+  const expiresMs = Date.parse(expiresAt);
+  return Number.isFinite(expiresMs) && expiresMs <= nowMs;
+}
+
 function publicQueueItems(state, session) {
   const studentById = new Map((state.students || []).map((student) => [student.id, student]));
   return (state.queue || [])
@@ -53,6 +72,7 @@ function publicQueueItems(state, session) {
 }
 
 function buildPublicStudentPage(student, queueItem) {
+  if (isStudentPageExpired(student)) return null;
   const token = student.token || student.id;
   return {
     token,
@@ -67,6 +87,7 @@ function buildPublicStudentPage(student, queueItem) {
     presentationStatus: student.presentationStatus || 'missing',
     wantsZoomDemo: student.wantsZoomDemo === true,
     problemDetails: student.problemDetails || null,
+    expiresAt: getStudentPageExpiresAt(student),
     updatedAt: student.updatedAt || nowIso()
   };
 }
@@ -399,10 +420,16 @@ class FirestoreAgent {
   }
 
   async updatePublicMobileDocs(state) {
-    const { doc, setDoc } = this.firebase;
+    const { deleteDoc, doc, setDoc } = this.firebase;
     const queueByStudent = new Map((state.queue || []).map((item) => [item.studentId, item]));
     for (const student of state.students || []) {
+      const token = student.token || student.id;
+      if (isStudentPageExpired(student)) {
+        await deleteDoc(doc(this.db, 'student_pages', token));
+        continue;
+      }
       const page = buildPublicStudentPage(student, queueByStudent.get(student.id));
+      if (!page) continue;
       await setDoc(doc(this.db, 'student_pages', page.token), withoutUndefined(page), { merge: true });
     }
     for (const session of state.sessions || []) {

@@ -126,16 +126,6 @@ export function StudentPage({ state, setState, activeSession, publicMode = false
           <p>Дозволені формати презентації: PDF, PPTX, PPT, ODP. Відео є необов’язковим: MP4, MOV, AVI, MKV, WEBM.</p>
           <p className="hint">Файли зберігаються локально на цьому ПК захисту через Electron Agent. PPTX/PPT/ODP відкриваються через PowerPoint у повноекранному режимі.</p>
 
-          <label className="check-row">
-            <input type="checkbox" checked={selected.wantsZoomDemo === true} onChange={(event) => patchSelected({ wantsZoomDemo: event.target.checked })} />
-            Бажаю демонструвати в Zoom результати роботи
-          </label>
-          {selected.wantsZoomDemo && activeSession.zoomUrl && <div className="zoom-help">
-            <b>Zoom для демонстрації:</b>
-            <a href={activeSession.zoomUrl} target="_blank" rel="noreferrer">{activeSession.zoomUrl}</a>
-            <button type="button" onClick={() => navigator.clipboard?.writeText(activeSession.zoomUrl || '')}>Скопіювати</button>
-            <small>Можна відсканувати QR телефоном і переслати посилання собі в месенджер.</small>
-          </div>}
 
           {selectedQueueItem && selectedHasPresentation && selected.registrationConfirmed
             ? <div className="ok-box">Запис повністю підтверджено: презентація є, мобільна сторінка відкрита. Місце в черзі збережено.</div>

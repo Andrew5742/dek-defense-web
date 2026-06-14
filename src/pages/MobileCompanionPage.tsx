@@ -65,7 +65,7 @@ export function MobileCompanionPage({ token }: Props) {
       {hasProblem ? (
         <section style={styles.problemBox}>
           <h2 style={styles.problemTitle}>Зауваження до роботи</h2>
-          <p>{student.problemDetails?.note || 'Комісія повернула роботу на доопрацювання.'}</p>
+          <p style={{ whiteSpace: 'pre-wrap' }}>{student.problemDetails?.note || 'Комісія повернула роботу на доопрацювання.'}</p>
           {student.problemDetails?.deadline && <p><b>Внести правки до:</b> {new Date(student.problemDetails.deadline).toLocaleString()}</p>}
           {student.problemDetails?.returnedToStudent && <p style={styles.warningText}>Роботу передано студенту на руки.</p>}
           <div style={styles.problemWarning}>Після внесення правок обов’язково повідомте керівника, комісію або секретаря.</div>

@@ -72,14 +72,7 @@ async function renderUploadPage({ identity, error = '', success = false, present
   const fallbackAction = uploadPageUrl(identity, '/upload-page');
   const uploadAction = uploadPageUrl(identity, '/upload');
   const confirmTarget = identity.returnUrl || uploadPageUrl(identity, '/upload-page');
-  const zoomBlock = identity.zoomUrl
-    ? `<div class="zoom-box">
-        <b>Zoom meeting</b>
-        <a href="${escapeHtml(identity.zoomUrl)}">${escapeHtml(identity.zoomUrl)}</a>
-        <button type="button" id="copyZoomBtn">Скопіювати Zoom link</button>
-        <small>QR можна відсканувати телефоном і переслати посилання собі в месенджер.</small>
-      </div>`
-    : '';
+  const zoomBlock = '';
   const backLink = identity.returnUrl
     ? `<a class="button secondary" href="${escapeHtml(identity.returnUrl)}">Повернутися до запису</a>`
     : '';
@@ -147,8 +140,7 @@ async function renderUploadPage({ identity, error = '', success = false, present
       <input type="hidden" name="zoomUrl" value="${escapeHtml(identity.zoomUrl)}">
       <label><b>Оберіть презентацію</b><input id="presentationInput" name="presentation" type="file" accept=".pdf,.pptx,.ppt,.odp" required></label>
       <label><b>Відео за потреби</b><input id="videoInput" name="video" type="file" accept=".mp4,.mov,.avi,.mkv,.webm"></label>
-      <label class="check-row"><input id="wantsZoomDemoInput" name="wantsZoomDemo" type="checkbox" value="1"${identity.wantsZoomDemo ? ' checked' : ''}> Бажаю демонструвати в Zoom результати роботи</label>
-      ${zoomBlock}
+
       <button id="uploadBtn" type="submit">Завантажити в Agent</button>${backLink}
     </form>
     <div id="progressWrap" class="progress-wrap">
@@ -193,7 +185,7 @@ async function renderUploadPage({ identity, error = '', success = false, present
       window.addEventListener(eventName, resetIdleTimer, { passive: true });
     });
     resetIdleTimer();
-    if (copyZoomBtn) copyZoomBtn.addEventListener('click', () => navigator.clipboard?.writeText(${JSON.stringify(identity.zoomUrl)}));
+
     form.addEventListener('submit', (event) => {
       event.preventDefault();
       const data = new FormData(form);
@@ -224,14 +216,15 @@ async function renderUploadPage({ identity, error = '', success = false, present
         uploadInProgress = false;
         uploadBtn.disabled = false;
         let payload = {};
-        try { payload = JSON.parse(xhr.responseText || '{}'); } catch {}
+        try { payload = JSON.parse(xhr.responseText || '{}'); } catch (err) {}
         if (xhr.status >= 200 && xhr.status < 300 && payload.ok !== false) {
           progressBar.style.width = '100%';
           progressText.textContent = 'Файл завантажено. Натисніть “Підтвердити запис”.';
-          const name = payload.presentation?.fileName || file.name;
+          const pres = payload.presentation || {};
+          const name = pres.fileName || file.name;
           statusBox.innerHTML = '<div class="ok"><b>Презентацію прийнято.</b><br>' + escapeHtmlClient(name) + '</div>';
-          const token = payload.presentation?.token;
-          renderQr(token, payload.presentation?.studentUrl || (token ? buildStudentUrl(token) : ''), payload.presentation?.qrDataUrl || '');
+          const token = pres.token;
+          renderQr(token, pres.studentUrl || (token ? buildStudentUrl(token) : ''), pres.qrDataUrl || '');
           confirmBtn.style.display = 'inline-block';
           resetIdleTimer();
           return;

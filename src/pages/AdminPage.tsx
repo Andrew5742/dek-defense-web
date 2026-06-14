@@ -4,6 +4,7 @@ import { downloadTextFile, formatLocalDateTime, nowIso } from '../shared/utils'
 import { addManualStudent, addToQueue, confirmImportReview, createContinuationSession, createSession, removeFromQueue, removeSession, removeStudent, reorderQueue, makeNextInQueue, requestOpenPresentation, requestOpenUploadPage, requestOpenZoom, requestShowDisplay, requestStartDefenses, saveImportReview, saveProtocol, setDefenseStatus, setRegistrationLock, updateImportReview, updateSession, updateStudent } from '../services/actions'
 import { importDocx, importFromPastedText } from '../services/importService'
 import { isFirebaseEnabled } from '../services/firebaseAdapter'
+import { buildStudentTemporaryUrl, formatStudentTemporaryPath } from '../services/publicUrl'
 import { StatusBadge } from '../components/StatusBadge'
 import { StudentEditor } from '../components/StudentEditor'
 
@@ -380,7 +381,7 @@ function QueuePanel({ state, setState, session, onEdit }: { state: AppState; set
                 <button disabled={!hasPresentation} onClick={() => setShowQrToken(showQrToken === s.id ? null : s.id)}>Показати QR</button>
                 <button onClick={() => {
                   const token = s.token || s.id;
-                  const url = `${import.meta.env.VITE_PUBLIC_APP_URL || window.location.origin}/s/${token}`;
+                  const url = buildStudentTemporaryUrl(token);
                   navigator.clipboard?.writeText(url).catch(() => alert(`URL: ${url}`));
                 }}>Скопіювати лінк</button>
                 <button onClick={() => setState(makeNextInQueue(state, session.id, s.id))}>Поставити наступним</button>
@@ -399,8 +400,9 @@ function QueuePanel({ state, setState, session, onEdit }: { state: AppState; set
               <tr>
                 <td colSpan={7} style={{ background: '#f8fafc', padding: 20, textAlign: 'center', borderBottom: '2px solid #cbd5e1' }}>
                   <div style={{ display: 'inline-block', background: 'white', padding: 16, border: '1px solid #e2e8f0' }}>
-                    <img alt="QR" src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`${import.meta.env.VITE_PUBLIC_APP_URL || window.location.origin}/s/${s.token || s.id}`)}`} />
+                    <img alt="QR" src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(buildStudentTemporaryUrl(s.token || s.id))}`} />
                   </div>
+                  <div style={{ marginTop: 12, color: '#475569', fontSize: 13, fontFamily: 'monospace' }}>Тимчасова сторінка студента: {formatStudentTemporaryPath(s.token || s.id)}</div>
                   <div style={{ marginTop: 12 }}>
                     <button className="primary" onClick={() => setShowQrToken(null)}>Закрити QR</button>
                   </div>

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { AppState, DefenseSession, Student } from '../shared/types'
 import { canRegister } from '../shared/utils'
 import { getAgentUploadPageUrl, updateStudent } from '../services/actions'
+import { buildStudentTemporaryUrl, formatStudentTemporaryPath } from '../services/publicUrl'
 import { StatusBadge } from '../components/StatusBadge'
 
 type Props = {
@@ -64,7 +65,7 @@ export function StudentPage({ state, setState, activeSession, publicMode = false
   const selectedQueueItem = selected ? state.queue.find((item) => item.sessionId === selected.sessionId && item.studentId === selected.id) : undefined
   const selectedHasPresentation = selected?.presentationStatus === 'ready' || selected?.presentationStatus === 'conversion_required'
   const companionToken = selected?.token || selected?.id || ''
-  const companionUrl = `${import.meta.env.VITE_PUBLIC_APP_URL || window.location.origin}/s/${companionToken}`
+  const companionUrl = buildStudentTemporaryUrl(companionToken)
 
   function patchSelected(patch: Partial<Student>) {
     if (!selected) return
@@ -146,7 +147,7 @@ export function StudentPage({ state, setState, activeSession, publicMode = false
                 </div>
                 <div style={{ background: '#b91c1c', padding: 16, fontSize: 20, fontWeight: 'bold' }}>Для завершення запису обов'язково відскануйте QR-код!</div>
                 <p style={{ color: '#94a3b8', fontSize: 14, maxWidth: 400, margin: '16px auto 0', lineHeight: 1.5 }}>Без відкриття цієї сторінки запис не буде підтверджено. На ній буде ваш номер черги, поточний статус захисту та подальші вказівки комісії.</p>
-                <div style={{ marginTop: 16, color: '#475569', fontSize: 13, fontFamily: 'monospace' }}>Тимчасова сторінка /s/{companionToken.slice(0, 8)}</div>
+                <div style={{ marginTop: 16, color: '#475569', fontSize: 13, fontFamily: 'monospace' }}>Тимчасова сторінка студента: {formatStudentTemporaryPath(companionToken)}</div>
               </div>
             : selectedAgentUploadPageUrl
               ? <p><button type="button" onClick={() => { window.location.href = selectedAgentUploadPageUrl }}>Відкрити завантаження через Electron Agent</button></p>

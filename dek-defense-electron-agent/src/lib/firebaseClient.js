@@ -56,8 +56,8 @@ async function createFirebaseClient() {
   const db = getFirestore(app);
   const auth = getAuth(app);
 
-  const email = process.env.FIREBASE_EMAIL || 'kiis_student@gmail.com';
-  const password = process.env.FIREBASE_PASSWORD || 'kiis_stud2026';
+  const email = process.env.FIREBASE_EMAIL || '';
+  const password = process.env.FIREBASE_PASSWORD || '';
   if (email && password) {
     await signInWithEmailAndPassword(auth, email, password);
   }

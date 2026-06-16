@@ -31,6 +31,8 @@
   "build": {
     "appId": "ua.edu.khnu.dek.defense.agent",
     "productName": "DEK Defense Station",
+    "artifactName": "DEK Defense Station Setup ${version}.${ext}",
+    "executableName": "DEK Defense Station",
     "files": [
       "src/**/*",
       "build/icon.*",
@@ -42,7 +44,18 @@
     "win": {
       "target": "nsis",
       "icon": "build/icon.ico",
-      "signAndEditExecutable": false
+      "signAndEditExecutable": false,
+      "legalTrademarks": "DEK Defense Station"
+    },
+    "nsis": {
+      "artifactName": "DEK Defense Station Setup ${version}.${ext}",
+      "shortcutName": "DEK Defense Station",
+      "uninstallDisplayName": "DEK Defense Station",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
     },
     "mac": {
       "target": "dmg",

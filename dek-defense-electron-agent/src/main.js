@@ -94,11 +94,7 @@ async function createMainWindow() {
 function openDisplayFullscreen(command = {}) {
   if (displayWindow && !displayWindow.isDestroyed()) {
     // Display already exists — bring it to front WITHOUT minimizing anything else
-    displayWindow.setAlwaysOnTop(false);
-    displayWindow.show();
-    displayWindow.setFullScreen(true);
-    displayWindow.moveTop();
-    displayWindow.focus();
+    bringDisplayToFront();
     return;
   }
 
@@ -122,12 +118,7 @@ function openDisplayFullscreen(command = {}) {
     }
   });
   displayWindow.once('ready-to-show', () => {
-    displayWindow.setKiosk(false);
-    displayWindow.setFullScreen(true);
-    displayWindow.show();
-    displayWindow.setAlwaysOnTop(false);
-    displayWindow.moveTop();
-    displayWindow.focus();
+    bringDisplayToFront();
   });
 
   const url = new URL(WEB_APP_URL);
@@ -158,13 +149,15 @@ function bringDisplayToFront() {
   if (displayWindow.isMinimized()) displayWindow.restore();
   displayWindow.show();
   displayWindow.setFullScreen(true);
-  displayWindow.setAlwaysOnTop(false);
+  displayWindow.setKiosk(true);
+  displayWindow.setAlwaysOnTop(true, 'screen-saver');
   displayWindow.moveTop();
   displayWindow.focus();
 }
 
 function releaseDisplayFocus() {
   if (!displayWindow || displayWindow.isDestroyed()) return;
+  displayWindow.setKiosk(false);
   displayWindow.setAlwaysOnTop(false);
   displayWindow.blur();
   displayWindow.setFocusable(false);
@@ -209,10 +202,11 @@ foreach ($process in @($remaining)) {
   });
 }
 
-async function closePresentationFullscreen() {
+async function closePresentationFullscreen(options = {}) {
+  const { restoreDisplay = true } = options;
   if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
   await closePowerPointSlideShows();
-  bringDisplayToFront();
+  if (restoreDisplay) bringDisplayToFront();
 }
 
 function openPdfFullscreen(pdfPath, command = {}) {
@@ -438,26 +432,27 @@ if ($slideShow -ne $null) {
 
 async function openPresentationFullscreen(prepared, command = {}) {
   // Close any existing presentation (PDF viewer) but NEVER close the display window
-  await closePresentationFullscreen();
+  await closePresentationFullscreen({ restoreDisplay: false });
   // Lower display below presentation level (don't close it)
-  if (displayWindow && !displayWindow.isDestroyed()) {
-    displayWindow.setAlwaysOnTop(false);
-  }
+  releaseDisplayFocus();
   if (prepared.kind === 'pdf') {
     if (displayWindow && !displayWindow.isDestroyed()) displayWindow.setFocusable(true);
     openPdfFullscreen(prepared.path, command);
     return;
   }
   try {
-    releaseDisplayFocus();
     await openPowerPointFullscreen(prepared.path);
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    await focusPowerPointSlideShow();
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 300 : 450));
+      await focusPowerPointSlideShow();
+    }
   } catch {
     releaseDisplayFocus();
     await openPowerPointProcessFallback(prepared.path);
-    await new Promise((resolve) => setTimeout(resolve, 900));
-    await focusPowerPointSlideShow();
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 900 : 450));
+      await focusPowerPointSlideShow();
+    }
   } finally {
     if (displayWindow && !displayWindow.isDestroyed()) displayWindow.setFocusable(true);
   }

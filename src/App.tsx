@@ -174,6 +174,14 @@ function DefenseApp() {
   const saveTimeoutRef = useRef<number>(0)
   const localSaveTimestampRef = useRef<number>(0)
   const forcedSessionIdRef = useRef<string | null>(null)
+  const activeSessionIdRef = useRef<string>('')
+  const activeSessionLocalTimestampRef = useRef<number>(0)
+
+  function chooseActiveSessionId(id: string) {
+    activeSessionIdRef.current = id
+    activeSessionLocalTimestampRef.current = Date.now()
+    setActiveSessionId(id)
+  }
 
   useEffect(() => {
     let disposed = false
@@ -198,7 +206,9 @@ function DefenseApp() {
       const params = new URLSearchParams(location.search)
       const sessionFromUrl = params.get('session')
       forcedSessionIdRef.current = sessionFromUrl
-      setActiveSessionId(sessionFromUrl || s.activeSessionId || s.sessions[0]?.id || '')
+      const nextActiveSessionId = sessionFromUrl || s.activeSessionId || s.sessions[0]?.id || ''
+      activeSessionIdRef.current = nextActiveSessionId
+      setActiveSessionId(nextActiveSessionId)
       setLoaded(true)
     }).catch((error) => {
       if (disposed) return
@@ -248,9 +258,19 @@ function DefenseApp() {
       }
       const forcedSessionId = forcedSessionIdRef.current
       if (forcedSessionId && next.sessions.some((session) => session.id === forcedSessionId)) {
+        activeSessionIdRef.current = forcedSessionId
         setActiveSessionId(forcedSessionId)
       } else {
-        setActiveSessionId(next.activeSessionId || next.sessions[0]?.id || '')
+        const localActiveSessionId = activeSessionIdRef.current
+        const keepLocalActiveSession =
+          Date.now() - activeSessionLocalTimestampRef.current < 5000 &&
+          Boolean(localActiveSessionId) &&
+          next.sessions.some((session) => session.id === localActiveSessionId)
+        const nextActiveSessionId = keepLocalActiveSession
+          ? localActiveSessionId
+          : next.activeSessionId || next.sessions[0]?.id || ''
+        activeSessionIdRef.current = nextActiveSessionId
+        setActiveSessionId(nextActiveSessionId)
       }
     })
 
@@ -275,7 +295,10 @@ function DefenseApp() {
           setSyncError(error instanceof Error ? error.message : String(error))
         })
       }, 800)
-      if (!activeSessionId && computedNext.sessions[0]) setActiveSessionId(computedNext.sessions[0].id)
+      if (!activeSessionIdRef.current && computedNext.sessions[0]) {
+        activeSessionIdRef.current = computedNext.sessions[0].id
+        setActiveSessionId(computedNext.sessions[0].id)
+      }
       return computedNext;
     });
   }
@@ -359,7 +382,7 @@ function DefenseApp() {
       <>
         <AdminHeader activeSessionTitle={activeSession?.title} onLogout={logoutAdmin} />
         {syncError && <div className="sync-error">{syncError}. Дані на цьому ПК можуть бути не синхронізовані.</div>}
-        <AdminPage state={state} setState={setState} activeSession={activeSession} setActiveSessionId={setActiveSessionId} />
+        <AdminPage state={state} setState={setState} activeSession={activeSession} setActiveSessionId={chooseActiveSessionId} />
       </>
     )
   }

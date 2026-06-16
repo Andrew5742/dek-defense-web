@@ -16,6 +16,7 @@ const store = new Store();
 let mainWindow;
 let presentationWindow;
 let displayWindow;
+let displayWindowReadyPromise = null;
 let firebase;
 let agent;
 let powerBlockerId = null;
@@ -95,7 +96,7 @@ function openDisplayFullscreen(command = {}) {
   if (displayWindow && !displayWindow.isDestroyed()) {
     // Display already exists — bring it to front WITHOUT minimizing anything else
     bringDisplayToFront();
-    return;
+    return Promise.resolve();
   }
 
   const { screen } = require('electron');
@@ -117,8 +118,15 @@ function openDisplayFullscreen(command = {}) {
       nodeIntegration: false
     }
   });
-  displayWindow.once('ready-to-show', () => {
-    bringDisplayToFront();
+  displayWindowReadyPromise = new Promise((resolve) => {
+    displayWindow.once('ready-to-show', () => {
+      bringDisplayToFront();
+      resolve();
+    });
+  });
+  displayWindow.on('closed', () => {
+    displayWindowReadyPromise = null;
+    displayWindow = undefined;
   });
 
   const url = new URL(WEB_APP_URL);
@@ -127,20 +135,22 @@ function openDisplayFullscreen(command = {}) {
   url.searchParams.set('kiosk', '1');
   url.searchParams.set('station', STATION_ID);
   if (command.sessionId) url.searchParams.set('session', command.sessionId);
-  displayWindow.loadURL(url.toString()).catch(() => {
-    displayWindow.loadFile(path.join(__dirname, 'renderer', 'display.html'), {
+  const loadPromise = displayWindow.loadURL(url.toString()).catch(() => {
+    return displayWindow.loadFile(path.join(__dirname, 'renderer', 'display.html'), {
       query: {
         sessionId: command.sessionId || '',
         stationId: STATION_ID
       }
     });
   });
+  return Promise.allSettled([displayWindowReadyPromise, loadPromise]).then(() => undefined);
 }
 
 function closeDisplayFullscreen() {
   if (displayWindow && !displayWindow.isDestroyed()) {
     displayWindow.close();
   }
+  displayWindowReadyPromise = null;
 }
 
 function bringDisplayToFront() {

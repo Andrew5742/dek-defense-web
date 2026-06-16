@@ -183,6 +183,33 @@ function DefenseApp() {
     setActiveSessionId(id)
   }
 
+  function mergeNewestById<T extends { id: string; updatedAt?: string }>(localItems: T[], remoteItems: T[]) {
+    const remoteById = new Map(remoteItems.map((item) => [item.id, item]))
+    const merged = localItems.map((localItem) => {
+      const remoteItem = remoteById.get(localItem.id)
+      if (!remoteItem) return localItem
+      const localTime = Date.parse(localItem.updatedAt || '')
+      const remoteTime = Date.parse(remoteItem.updatedAt || '')
+      return Number.isFinite(localTime) && localTime >= remoteTime ? localItem : remoteItem
+    })
+    for (const remoteItem of remoteItems) {
+      if (!merged.find((item) => item.id === remoteItem.id)) merged.push(remoteItem)
+    }
+    return merged
+  }
+
+  function commandsChanged(prevCommands: AppState['commands'], nextCommands: AppState['commands']) {
+    if (prevCommands.length !== nextCommands.length) return true
+    return nextCommands.some((command, index) => {
+      const prevCommand = prevCommands[index]
+      return !prevCommand ||
+        prevCommand.id !== command.id ||
+        prevCommand.status !== command.status ||
+        prevCommand.updatedAt !== command.updatedAt ||
+        prevCommand.error !== command.error
+    })
+  }
+
   useEffect(() => {
     let disposed = false
     if (page !== 'display') localStorage.removeItem(DISPLAY_LOCK_KEY)
@@ -224,34 +251,18 @@ function DefenseApp() {
       const msSinceLocalSave = Date.now() - localSaveTimestampRef.current
       if (msSinceLocalSave < 5000) {
         setStateRaw((local) => {
-          // Merge students: keep whichever version of each student is newer
-          const remoteStudentsById = new Map(next.students.map(s => [s.id, s]))
-          const mergedStudents = local.students.map((localStudent) => {
-            const remoteStudent = remoteStudentsById.get(localStudent.id)
-            if (!remoteStudent) return localStudent
-            const localTime = Date.parse(localStudent.updatedAt || '')
-            const remoteTime = Date.parse(remoteStudent.updatedAt || '')
-            return (Number.isFinite(localTime) && localTime >= remoteTime) ? localStudent : remoteStudent
-          })
-          // Add any new students from remote not in local
-          for (const rs of next.students) {
-            if (!mergedStudents.find(s => s.id === rs.id)) mergedStudents.push(rs)
-          }
+          const mergedStudents = mergeNewestById(local.students, next.students)
+          const mergedQueue = mergeNewestById(local.queue, next.queue)
+          const mergedCommands = mergeNewestById(local.commands, next.commands)
+          const mergedPresentations = mergeNewestById(local.presentations, next.presentations)
 
-          // Merge queue: keep whichever version of each queue item is newer
-          const remoteQueueById = new Map(next.queue.map(q => [q.id, q]))
-          const mergedQueue = local.queue.map((localItem) => {
-            const remoteItem = remoteQueueById.get(localItem.id)
-            if (!remoteItem) return localItem
-            const localTime = Date.parse(localItem.updatedAt || '')
-            const remoteTime = Date.parse(remoteItem.updatedAt || '')
-            return (Number.isFinite(localTime) && localTime >= remoteTime) ? localItem : remoteItem
-          })
-          for (const rq of next.queue) {
-            if (!mergedQueue.find(q => q.id === rq.id)) mergedQueue.push(rq)
+          return {
+            ...next,
+            students: mergedStudents,
+            queue: mergedQueue,
+            commands: mergedCommands,
+            presentations: mergedPresentations
           }
-
-          return { ...next, students: mergedStudents, queue: mergedQueue }
         })
       } else {
         setStateRaw(next)
@@ -285,7 +296,8 @@ function DefenseApp() {
 
   function setState(next: AppState | ((prev: AppState) => AppState)) {
     setStateRaw((prev) => {
-      const computedNext = typeof next === 'function' ? next(prev) : next;
+      const computedNext = typeof next === 'function' ? next(prev) : next
+      const shouldSaveFast = commandsChanged(prev.commands, computedNext.commands)
       setSyncError('')
       window.clearTimeout(saveTimeoutRef.current)
       // Mark that we have a pending local change so Firebase subscription won't overwrite it
@@ -294,13 +306,13 @@ function DefenseApp() {
         void repository.saveState(computedNext).catch((error) => {
           setSyncError(error instanceof Error ? error.message : String(error))
         })
-      }, 800)
+      }, shouldSaveFast ? 25 : 800)
       if (!activeSessionIdRef.current && computedNext.sessions[0]) {
         activeSessionIdRef.current = computedNext.sessions[0].id
         setActiveSessionId(computedNext.sessions[0].id)
       }
-      return computedNext;
-    });
+      return computedNext
+    })
   }
 
   useEffect(() => {

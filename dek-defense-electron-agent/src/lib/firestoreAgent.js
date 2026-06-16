@@ -138,7 +138,8 @@ class FirestoreAgent {
     this.closePresentationFullscreen = closePresentationFullscreen;
     this.unsubscribers = [];
     this.heartbeatTimer = null;
-    this.seenCommandIds = new Set();
+    this.inFlightCommandIds = new Set();
+    this.handledCommandIds = new Set();
   }
 
   async start() {
@@ -224,7 +225,7 @@ class FirestoreAgent {
   shouldHandleCommand(command) {
     if (!command || command.status !== 'pending') return false;
     const commandId = command.id || `${command.type}:${command.sessionId}:${command.studentId || ''}:${command.createdAt || ''}`;
-    if (this.seenCommandIds.has(commandId)) return false;
+    if (this.inFlightCommandIds.has(commandId) || this.handledCommandIds.has(commandId)) return false;
     if (this.isStaleCommand(command)) return false;
     const target = command.targetStationId;
     if (!target || target === this.stationId || target === 'station_local_demo') return true;
@@ -262,24 +263,26 @@ class FirestoreAgent {
   }
 
   async handleCommand(commandId, command) {
-    if (this.seenCommandIds.has(commandId)) return;
-    this.seenCommandIds.add(commandId);
-
-    if (this.isStaleCommand(command)) {
-      await this.setCommandStatus(commandId, 'error', { errorMessage: 'Stale command ignored by local agent' });
-      await this.addEvent('COMMAND_STALE_IGNORED', { commandId, commandType: command.type, sessionId: command.sessionId });
-      return;
-    }
-
-    await this.setCommandStatus(commandId, 'running');
-    this.sendToRenderer('command-running', { commandId, command });
+    if (this.inFlightCommandIds.has(commandId) || this.handledCommandIds.has(commandId)) return;
+    this.inFlightCommandIds.add(commandId);
 
     try {
+      if (this.isStaleCommand(command)) {
+        await this.setCommandStatus(commandId, 'error', { errorMessage: 'Stale command ignored by local agent' });
+        await this.addEvent('COMMAND_STALE_IGNORED', { commandId, commandType: command.type, sessionId: command.sessionId });
+        this.handledCommandIds.add(commandId);
+        return;
+      }
+
+      await this.setCommandStatus(commandId, 'running');
+      this.sendToRenderer('command-running', { commandId, command });
+
       if (command.type === 'start_defense_display' || command.type === 'show_display') {
         await this.closePresentationFullscreen?.();
-        this.openDisplayFullscreen(command);
+        await this.openDisplayFullscreen(command);
         await this.setCommandStatus(commandId, 'done');
         await this.addEvent('DISPLAY_STARTED', { sessionId: command.sessionId });
+        this.handledCommandIds.add(commandId);
         return;
       }
 
@@ -289,6 +292,7 @@ class FirestoreAgent {
         await openZoomMeeting(shell, command.zoomUrl || this.zoomUrl);
         await this.setCommandStatus(commandId, 'done');
         await this.addEvent('ZOOM_OPENED', { sessionId: command.sessionId, studentId: command.studentId || null });
+        this.handledCommandIds.add(commandId);
         return;
       }
 
@@ -296,6 +300,7 @@ class FirestoreAgent {
         await this.openUploadPage(command);
         await this.setCommandStatus(commandId, 'done');
         await this.addEvent('UPLOAD_PAGE_OPENED', { sessionId: command.sessionId, studentId: command.studentId || null });
+        this.handledCommandIds.add(commandId);
         return;
       }
 
@@ -308,6 +313,7 @@ class FirestoreAgent {
         });
         await this.setCommandStatus(commandId, 'done');
         await this.addEvent('PRESENTATION_OPENED', { sessionId: command.sessionId, studentId: command.studentId });
+        this.handledCommandIds.add(commandId);
         return;
       }
 
@@ -315,7 +321,10 @@ class FirestoreAgent {
     } catch (error) {
       await this.setCommandStatus(commandId, 'error', { errorMessage: error.message });
       await this.addEvent('COMMAND_ERROR', { commandId, commandType: command.type, errorMessage: error.message });
+      this.handledCommandIds.add(commandId);
       throw error;
+    } finally {
+      this.inFlightCommandIds.delete(commandId);
     }
   }
 

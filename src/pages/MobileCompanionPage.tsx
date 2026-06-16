@@ -76,9 +76,8 @@ export function MobileCompanionPage({ token }: Props) {
             <div style={styles.queueNumberLabel}>Ваш номер черги</div>
             <div style={styles.queueNumber}>
               {(() => {
-                const pos = student.queuePosition
-                  ?? allVisible.find((item) => item.studentId === student.studentId)?.position;
-                return pos != null ? pos : '—';
+                const position = Number(student.queuePosition ?? allVisible.find((item) => item.studentId === student.studentId)?.position)
+                return Number.isFinite(position) && position > 0 ? position : '—';
               })()}
             </div>
           </section>

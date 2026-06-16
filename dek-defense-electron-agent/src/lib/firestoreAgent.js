@@ -74,6 +74,7 @@ function publicQueueItems(state, session) {
 function buildPublicStudentPage(student, queueItem) {
   if (isStudentPageExpired(student)) return null;
   const token = student.token || student.id;
+  const queuePosition = Number(queueItem?.position ?? student.queuePosition);
   return {
     token,
     studentId: student.id,
@@ -81,7 +82,7 @@ function buildPublicStudentPage(student, queueItem) {
     fullName: student.fullName || '',
     groupName: student.groupName || '',
     thesisTitle: student.thesisTitleEdited || student.thesisTitleOriginal || '',
-    queuePosition: queueItem?.position || student.queuePosition || null,
+    queuePosition: Number.isFinite(queuePosition) && queuePosition > 0 ? queuePosition : null,
     registrationConfirmed: student.registrationConfirmed === true,
     defenseStatus: student.defenseStatus || 'waiting',
     presentationStatus: student.presentationStatus || 'missing',
@@ -421,14 +422,15 @@ class FirestoreAgent {
 
   async updatePublicMobileDocs(state, baseState = null) {
     const { deleteDoc, doc, setDoc } = this.firebase;
-    const queueByStudent = new Map((state.queue || []).map((item) => [item.studentId, item]));
-    const baseQueueByStudent = baseState ? new Map((baseState.queue || []).map((item) => [item.studentId, item])) : new Map();
+    const queueKey = (item) => `${item.sessionId}:${item.studentId}`;
+    const queueByStudent = new Map((state.queue || []).map((item) => [queueKey(item), item]));
+    const baseQueueByStudent = baseState ? new Map((baseState.queue || []).map((item) => [queueKey(item), item])) : new Map();
     const basePages = new Map();
 
     if (baseState) {
       for (const student of baseState.students || []) {
         if (!isStudentPageExpired(student)) {
-          const p = buildPublicStudentPage(student, baseQueueByStudent.get(student.id));
+          const p = buildPublicStudentPage(student, baseQueueByStudent.get(`${student.sessionId}:${student.id}`));
           if (p) basePages.set(student.id, JSON.stringify(withoutUndefined(p)));
         }
       }
@@ -443,7 +445,7 @@ class FirestoreAgent {
         }
         continue;
       }
-      const page = buildPublicStudentPage(student, queueByStudent.get(student.id));
+      const page = buildPublicStudentPage(student, queueByStudent.get(`${student.sessionId}:${student.id}`));
       if (!page) continue;
       
       const pageJson = JSON.stringify(withoutUndefined(page));

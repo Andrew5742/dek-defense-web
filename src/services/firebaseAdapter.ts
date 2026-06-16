@@ -354,6 +354,7 @@ function isStudentPageExpired(student: Student, nowMs = Date.now()): boolean {
 function buildPublicStudentPage(student: Student, queueItem?: QueueItem): PublicStudentPage | null {
   if (isStudentPageExpired(student)) return null
   const token = student.token || student.id
+  const queuePosition = Number(queueItem?.position ?? student.queuePosition)
   return {
     token,
     studentId: student.id,
@@ -361,7 +362,7 @@ function buildPublicStudentPage(student: Student, queueItem?: QueueItem): Public
     fullName: student.fullName,
     groupName: student.groupName,
     thesisTitle: student.thesisTitleEdited,
-    queuePosition: queueItem?.position || student.queuePosition,
+    queuePosition: Number.isFinite(queuePosition) && queuePosition > 0 ? queuePosition : undefined,
     registrationConfirmed: student.registrationConfirmed === true,
     defenseStatus: student.defenseStatus,
     presentationStatus: student.presentationStatus,
@@ -523,8 +524,9 @@ export class FirebaseRepository implements AppRepository {
       getBatch().set(doc(runtime.db, 'dek_protocols', protocol.id), withoutUndefined(protocol), { merge: true })
     }
 
-    const queueByStudent = new Map(stateToSave.queue.map((item) => [item.studentId, item]))
-    const remoteQueueByStudent = new Map(remoteState?.queue.map((item) => [item.studentId, item]) || [])
+    const queueKey = (item: Pick<QueueItem, 'sessionId' | 'studentId'>) => `${item.sessionId}:${item.studentId}`
+    const queueByStudent = new Map(stateToSave.queue.map((item) => [queueKey(item), item]))
+    const remoteQueueByStudent = new Map(remoteState?.queue.map((item) => [queueKey(item), item]) || [])
     
     for (const student of stateToSave.students) {
       const token = student.token || student.id
@@ -534,13 +536,13 @@ export class FirebaseRepository implements AppRepository {
         }
         continue
       }
-      const page = buildPublicStudentPage(student, queueByStudent.get(student.id))
+      const page = buildPublicStudentPage(student, queueByStudent.get(`${student.sessionId}:${student.id}`))
       if (!page) continue
       const payload = withoutUndefined(page)
       if (remoteState) {
         const remoteStudent = remoteState.students.find(s => s.id === student.id)
         if (remoteStudent) {
-          const remotePage = buildPublicStudentPage(remoteStudent, remoteQueueByStudent.get(student.id))
+          const remotePage = buildPublicStudentPage(remoteStudent, remoteQueueByStudent.get(`${remoteStudent.sessionId}:${remoteStudent.id}`))
           if (remotePage && JSON.stringify(withoutUndefined(remotePage)) === JSON.stringify(payload)) continue
         }
       }

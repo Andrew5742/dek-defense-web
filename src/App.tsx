@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
 import type { AppState } from './shared/types'
 import { emptyState } from './shared/utils'
 import { localRepository } from './services/localRepository'
@@ -45,7 +45,6 @@ function writeDesktopUrl(page: Page) {
 
 function requestAppFullscreen() {
   void window.dekAgent?.setKioskMode?.(true).catch(() => {})
-  document.documentElement.requestFullscreen?.().catch(() => {})
 }
 
 function AdminLogin({ onAdminLogin }: { onAdminLogin: () => void }) {
@@ -127,7 +126,10 @@ function DefenseHeader({ page, setPage, activeSessionTitle }: {
         <button className={page === 'agent' ? 'active' : ''} onClick={() => setPage('agent')}>Станція показу</button>
         <button className={page === 'display' ? 'active' : ''} onClick={() => setPage('display')}>Display</button>
       </nav>
-      <button className="secondary" onClick={() => window.dekAgent?.openStorage?.()}>Папка презентацій</button>
+      <div style={{ display: 'flex', gap: 5 }}>
+        <button className="secondary" onClick={() => window.dekAgent?.openStorage?.()}>Відкрити папку</button>
+        <button className="secondary" onClick={() => window.dekAgent?.changeStorage?.().then((res) => { if (res) alert(`Збережено нову папку:\n${res}`) })}>Змінити папку</button>
+      </div>
     </header>
   )
 }
@@ -169,6 +171,8 @@ function DefenseApp() {
   const [studentLocked, setStudentLocked] = useState(() => desktopDefense && page === 'student' && localStorage.getItem(STUDENT_LOCK_KEY) === '1')
   const [showLockOverlay, setShowLockOverlay] = useState(false)
   const repository = firebaseRepository || localRepository
+  const saveTimeoutRef = useRef<number>(0)
+  const localSaveTimestampRef = useRef<number>(0)
 
   useEffect(() => {
     let disposed = false
@@ -203,7 +207,43 @@ function DefenseApp() {
 
     const unsubscribe = firebaseRepository?.subscribe((next) => {
       if (disposed) return
-      setStateRaw(next)
+      // If we just saved locally within the last 5 seconds, merge carefully:
+      // prefer local student/queue data if it's newer than what Firebase is returning
+      const msSinceLocalSave = Date.now() - localSaveTimestampRef.current
+      if (msSinceLocalSave < 5000) {
+        setStateRaw((local) => {
+          // Merge students: keep whichever version of each student is newer
+          const remoteStudentsById = new Map(next.students.map(s => [s.id, s]))
+          const mergedStudents = local.students.map((localStudent) => {
+            const remoteStudent = remoteStudentsById.get(localStudent.id)
+            if (!remoteStudent) return localStudent
+            const localTime = Date.parse(localStudent.updatedAt || '')
+            const remoteTime = Date.parse(remoteStudent.updatedAt || '')
+            return (Number.isFinite(localTime) && localTime >= remoteTime) ? localStudent : remoteStudent
+          })
+          // Add any new students from remote not in local
+          for (const rs of next.students) {
+            if (!mergedStudents.find(s => s.id === rs.id)) mergedStudents.push(rs)
+          }
+
+          // Merge queue: keep whichever version of each queue item is newer
+          const remoteQueueById = new Map(next.queue.map(q => [q.id, q]))
+          const mergedQueue = local.queue.map((localItem) => {
+            const remoteItem = remoteQueueById.get(localItem.id)
+            if (!remoteItem) return localItem
+            const localTime = Date.parse(localItem.updatedAt || '')
+            const remoteTime = Date.parse(remoteItem.updatedAt || '')
+            return (Number.isFinite(localTime) && localTime >= remoteTime) ? localItem : remoteItem
+          })
+          for (const rq of next.queue) {
+            if (!mergedQueue.find(q => q.id === rq.id)) mergedQueue.push(rq)
+          }
+
+          return { ...next, students: mergedStudents, queue: mergedQueue }
+        })
+      } else {
+        setStateRaw(next)
+      }
       setActiveSessionId((current) => current || next.activeSessionId || next.sessions[0]?.id || '')
     })
 
@@ -214,13 +254,23 @@ function DefenseApp() {
     }
   }, [])
 
-  function setState(next: AppState) {
-    setStateRaw(next)
-    setSyncError('')
-    void repository.saveState(next).catch((error) => {
-      setSyncError(error instanceof Error ? error.message : String(error))
-    })
-    if (!activeSessionId && next.sessions[0]) setActiveSessionId(next.sessions[0].id)
+
+
+  function setState(next: AppState | ((prev: AppState) => AppState)) {
+    setStateRaw((prev) => {
+      const computedNext = typeof next === 'function' ? next(prev) : next;
+      setSyncError('')
+      window.clearTimeout(saveTimeoutRef.current)
+      // Mark that we have a pending local change so Firebase subscription won't overwrite it
+      localSaveTimestampRef.current = Date.now()
+      saveTimeoutRef.current = window.setTimeout(() => {
+        void repository.saveState(computedNext).catch((error) => {
+          setSyncError(error instanceof Error ? error.message : String(error))
+        })
+      }, 800)
+      if (!activeSessionId && computedNext.sessions[0]) setActiveSessionId(computedNext.sessions[0].id)
+      return computedNext;
+    });
   }
 
   useEffect(() => {
@@ -245,6 +295,10 @@ function DefenseApp() {
   }
 
   function exitDisplayMode() {
+    if (new URLSearchParams(window.location.search).get('kiosk') === '1') {
+      window.close()
+      return
+    }
     void window.dekAgent?.setKioskMode?.(false).catch(() => {})
     localStorage.removeItem(DISPLAY_LOCK_KEY)
     localStorage.removeItem(STUDENT_LOCK_KEY)

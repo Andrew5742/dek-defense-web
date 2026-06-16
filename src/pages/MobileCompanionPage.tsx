@@ -29,14 +29,6 @@ export function MobileCompanionPage({ token }: Props) {
   const expiresMs = student?.expiresAt ? Date.parse(student.expiresAt) : 0
   const isExpired = Boolean(expiresMs && Number.isFinite(expiresMs) && expiresMs <= nowMs)
   const allVisible = useMemo(() => [...(display?.currentlyDefending || []), ...(display?.nextDefending || [])], [display])
-  const isNext = (display?.nextDefending || []).slice(0, 3).some((item) => item.studentId === student?.studentId)
-  const isCurrent = (display?.currentlyDefending || []).some((item) => item.studentId === student?.studentId)
-
-  useEffect(() => {
-    if (!expiresMs || !Number.isFinite(expiresMs)) return
-    const timeout = window.setTimeout(() => setNowMs(Date.now()), Math.max(1000, expiresMs - Date.now()))
-    return () => window.clearTimeout(timeout)
-  }, [expiresMs])
 
   useEffect(() => {
     if (!isExpired) return
@@ -44,9 +36,7 @@ export function MobileCompanionPage({ token }: Props) {
   }, [isExpired, token])
   if (!loaded) return <Screen><div style={styles.muted}>Завантаження...</div></Screen>
   if (!student || isExpired) return <UnavailableScreen />
-  if (display && !display.enabled) {
-    return <Screen><div style={styles.muted}>Відображення тимчасово вимкнено комісією. Очікуйте оновлень або зверніться до секретаря.</div></Screen>
-  }
+  // Removed early return for display.enabled === false
 
   const problemResolved = student.defenseStatus === 'defended' && student.problemDetails?.resolved
   const defendedClean = student.defenseStatus === 'defended' && !student.problemDetails?.resolved
@@ -74,7 +64,7 @@ export function MobileCompanionPage({ token }: Props) {
         <section style={styles.successBox}>Проблеми вирішено, роботу прийнято. Сторінка деактивується через 15 хвилин.</section>
       ) : defendedClean ? (
         <section style={styles.successBox}>Захист завершено успішно. Якщо проблем не виявлено, сторінка деактивується через 15 хвилин.</section>
-      ) : student.defenseStatus === 'presenting' || isCurrent ? (
+      ) : student.defenseStatus === 'presenting' ? (
         <section style={styles.defendingBox}>
           <div style={styles.pulseIndicator} />
           <h2 style={{ margin: 0 }}>Ви захищаєтесь</h2>
@@ -84,13 +74,37 @@ export function MobileCompanionPage({ token }: Props) {
         <>
           <section style={styles.queueCard}>
             <div style={styles.queueNumberLabel}>Ваш номер черги</div>
-            <div style={styles.queueNumber}>{student.queuePosition || allVisible.find((item) => item.studentId === student.studentId)?.position || '-'}</div>
+            <div style={styles.queueNumber}>
+              {(() => {
+                const pos = student.queuePosition
+                  ?? allVisible.find((item) => item.studentId === student.studentId)?.position;
+                return pos != null ? pos : '—';
+              })()}
+            </div>
           </section>
 
-          {isNext && <section style={styles.alertBox}>Ви в наступній черзі, готуйтесь.</section>}
+          {!display?.enabled ? (
+            <section style={{ background: '#0f172a', border: '1px solid #334155', padding: 20, textAlign: 'center' }}>
+              <h2 style={{ margin: '0 0 8px 0', fontSize: 18, color: '#38bdf8' }}>Захист ще не розпочався</h2>
+              <p style={{ margin: 0, color: '#cbd5e1' }}>Очікуйте початку сесії та уважно слідкуйте за оновленнями на цій сторінці.</p>
+            </section>
+          ) : (
+            <>
+              {(display?.nextDefending || []).slice(0, 3).some((item) => item.studentId === student.studentId) && <section style={styles.alertBox}>Ви в наступній черзі, готуйтесь.</section>}
+              <QueueSection title="Зараз захищаються студенти" rows={display?.currentlyDefending || []} studentId={student.studentId} />
+              <QueueSection title="Готуються наступні студенти" rows={display?.nextDefending || []} studentId={student.studentId} />
+            </>
+          )}
 
-          <QueueSection title="Зараз захищаються студенти" rows={display?.currentlyDefending || []} studentId={student.studentId} />
-          <QueueSection title="Готуються наступні студенти" rows={display?.nextDefending || []} studentId={student.studentId} />
+          <section style={{ background: '#0f172a', border: '1px solid #334155', padding: 20 }}>
+            <h3 style={{ margin: '0 0 12px 0', fontSize: 16, color: '#e2e8f0' }}>Правила захисту</h3>
+            <ul style={{ paddingLeft: 20, margin: 0, color: '#94a3b8', lineHeight: 1.6, fontSize: 14 }}>
+              <li style={{ marginBottom: 8 }}>Заходьте до аудиторії п'ятірками: очікуйте, поки вийде попередня п'ятірка студентів.</li>
+              <li style={{ marginBottom: 8 }}>Обов'язково перевірте наявність усіх підписів (керівника тощо) у заліковій книжці та віддайте її комісії (покладіть на стіл).</li>
+              <li style={{ marginBottom: 8 }}>Слідкуйте за своєю чергою на цій сторінці. Коли настане ваш час, екран зміниться на «Ви захищаєтесь».</li>
+              <li style={{ marginBottom: 0 }}>Сюди ж комісія може відправити зауваження до вашої роботи або результати.</li>
+            </ul>
+          </section>
 
           <section style={styles.zoomHint}>
             <b>Zoom-інструкція</b>

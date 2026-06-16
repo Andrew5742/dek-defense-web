@@ -15,8 +15,10 @@
   },
   "dependencies": {
     "@vitejs/plugin-react": "5.0.4",
+    "electron-store": "^11.0.2",
     "firebase": "11.10.0",
     "mammoth": "1.9.1",
+    "qrcode.react": "^4.2.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "vite": "7.1.10"
@@ -24,6 +26,7 @@
   "devDependencies": {
     "@types/react": "18.3.12",
     "@types/react-dom": "18.3.1",
+    "firebase-admin": "^14.0.0",
     "firebase-tools": "^14.17.0",
     "gh-pages": "^6.3.0",
     "typescript": "5.7.3"

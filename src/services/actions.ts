@@ -36,7 +36,7 @@ function applyStudentPatch(student: Student, patch: Partial<Student>): Student {
 export function addEvent(state: AppState, event: Omit<EventLogItem, 'id' | 'createdAt'>): AppState {
   return {
     ...state,
-    events: [{ id: uid('event'), createdAt: nowIso(), ...event }, ...state.events].slice(0, 1000)
+    events: [{ id: uid('event'), createdAt: nowIso(), ...event }, ...state.events].slice(0, 100)
   }
 }
 
@@ -223,6 +223,34 @@ export function removeSession(state: AppState, sessionId: string): AppState {
     actor: 'admin',
     message: `Видалено сесію ${session.title}`,
     payload: { sessionId }
+  })
+}
+
+export function reorderSession(state: AppState, sessionId: string, direction: -1 | 1): AppState {
+  const currentSorted = [...state.sessions].sort((a, b) => (a.sortOrder ?? state.sessions.indexOf(a)) - (b.sortOrder ?? state.sessions.indexOf(b)))
+  const idx = currentSorted.findIndex((s) => s.id === sessionId)
+  if (idx < 0) return state
+  const swapIdx = idx + direction
+  if (swapIdx < 0 || swapIdx >= currentSorted.length) return state
+  
+  const temp = currentSorted[idx]
+  currentSorted[idx] = currentSorted[swapIdx]
+  currentSorted[swapIdx] = temp
+
+  const now = nowIso()
+  const updatedSessions = state.sessions.map((s) => {
+    const newIdx = currentSorted.findIndex((x) => x.id === s.id)
+    if (s.sortOrder !== newIdx) {
+      return { ...s, sortOrder: newIdx, updatedAt: now }
+    }
+    return s
+  })
+
+  return addEvent({ ...state, sessions: updatedSessions }, {
+    sessionId,
+    type: 'SESSION_UPDATED',
+    actor: 'admin',
+    message: 'Змінено порядок сесій'
   })
 }
 
@@ -530,6 +558,36 @@ export function reorderQueue(state: AppState, sessionId: string, studentId: stri
   })
 }
 
+export function setQueuePositionAbsolute(state: AppState, sessionId: string, studentId: string, targetPosition: number): AppState {
+  const sessionQueue = state.queue.filter((q) => q.sessionId === sessionId).sort((a, b) => a.position - b.position)
+  const idx = sessionQueue.findIndex((q) => q.studentId === studentId)
+  if (idx < 0) return state
+  let pos = targetPosition
+  if (pos < 1) pos = 1
+  if (pos > sessionQueue.length) pos = sessionQueue.length
+
+  const target = sessionQueue[idx]
+  const rest = sessionQueue.filter((_, i) => i !== idx)
+  rest.splice(pos - 1, 0, target)
+
+  const updatedQueue = state.queue.map((q) => {
+    if (q.sessionId !== sessionId) return q
+    const newIdx = rest.findIndex((x) => x.id === q.id)
+    if (newIdx >= 0) {
+      return { ...q, position: newIdx + 1, updatedAt: nowIso() }
+    }
+    return q
+  })
+
+  return addEvent({ ...state, queue: updatedQueue }, {
+    sessionId,
+    type: 'QUEUE_REORDERED',
+    actor: 'admin',
+    message: `Змінено позицію в черзі на ${pos}`,
+    payload: { studentId, targetPosition: pos }
+  })
+}
+
 export function makeNextInQueue(state: AppState, sessionId: string, studentId: string): AppState {
   const sessionQueue = state.queue.filter((q) => q.sessionId === sessionId).sort((a, b) => a.position - b.position)
   const idx = sessionQueue.findIndex((q) => q.studentId === studentId)
@@ -559,18 +617,56 @@ export function makeNextInQueue(state: AppState, sessionId: string, studentId: s
 }
 
 export function removeFromQueue(state: AppState, sessionId: string, studentId: string): AppState {
-  const queue = state.queue.filter((q) => !(q.sessionId === sessionId && q.studentId === studentId))
-    .filter((q) => q.sessionId !== sessionId)
+  // Keep all queue items EXCEPT the one for this student in this session
+  const otherSessions = state.queue.filter((q) => q.sessionId !== sessionId)
   const sessionQueue = state.queue
     .filter((q) => q.sessionId === sessionId && q.studentId !== studentId)
     .sort((a, b) => a.position - b.position)
     .map((q, idx) => ({ ...q, position: idx + 1, updatedAt: nowIso() }))
   const student = state.students.find((s) => s.id === studentId)
-  return addEvent({ ...state, queue: [...queue, ...sessionQueue] }, {
+  return addEvent({ ...state, queue: [...otherSessions, ...sessionQueue] }, {
     sessionId,
     type: 'QUEUE_REMOVED',
     actor: 'admin',
     message: `Прибрано з черги: ${student?.fullName || studentId}`,
+    payload: { sessionId, studentId }
+  })
+}
+
+export function cancelRegistration(state: AppState, sessionId: string, studentId: string): AppState {
+  const updatedStudents = state.students.map((s) =>
+    s.id === studentId
+      ? {
+          ...s,
+          registrationStatus: 'not_registered' as const,
+          presentationStatus: 'missing' as const,
+          registrationConfirmed: false,
+          registeredAt: undefined,
+          queuePosition: undefined,
+          token: '',
+          hasVideo: false,
+          updatedAt: nowIso()
+        }
+      : s
+  )
+  // Remove from queue and renumber remaining entries
+  const otherSessions = state.queue.filter((q) => q.sessionId !== sessionId)
+  const sessionQueue = state.queue
+    .filter((q) => q.sessionId === sessionId && q.studentId !== studentId)
+    .sort((a, b) => a.position - b.position)
+    .map((q, idx) => ({ ...q, position: idx + 1, updatedAt: nowIso() }))
+  const updatedPresentations = state.presentations.filter((p) => p.studentId !== studentId)
+
+  if (window.dekAgent?.deletePresentation) {
+    window.dekAgent.deletePresentation(sessionId, studentId).catch(() => {})
+  }
+
+  const nextState = { ...state, students: updatedStudents, queue: [...otherSessions, ...sessionQueue], presentations: updatedPresentations }
+  return addEvent(nextState, {
+    sessionId,
+    type: 'QUEUE_REMOVED',
+    actor: 'admin',
+    message: `Скасовано реєстрацію: ${state.students.find((s) => s.id === studentId)?.fullName || studentId}`,
     payload: { sessionId, studentId }
   })
 }
@@ -599,7 +695,8 @@ export async function uploadPresentation(state: AppState, studentId: string, fil
       const payload = await response.json().catch(() => ({}))
       if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `Agent upload failed: ${response.status}`)
       const uploaded = payload?.presentation || {}
-      const agentStatus = uploaded.status || (ext === 'pdf' ? 'ready' : 'converting')
+      const rawAgentStatus = uploaded.status || 'ready'
+      const agentStatus = rawAgentStatus === 'converting' || rawAgentStatus === 'conversion_required' ? 'ready' : rawAgentStatus
       const meta: PresentationMeta = {
         id: `${student.sessionId}_${studentId}`,
         sessionId: student.sessionId,
@@ -669,7 +766,7 @@ export async function uploadPresentation(state: AppState, studentId: string, fil
     mimeType: file.type || 'application/octet-stream',
     extension: ext,
     version,
-    status: ext === 'pdf' ? 'ready' : 'conversion_required',
+    status: 'ready',
     uploadedAt: nowIso(),
     localOnly: true,
     storageKey,
@@ -790,6 +887,23 @@ export function requestStartDefenses(state: AppState, sessionId: string): AppSta
     actor: 'admin',
     message: 'Запущено режим захистів на ПК показу',
     payload: { commandId: command.id }
+  })
+}
+
+export function clearOldCommands(state: AppState, sessionId: string): AppState {
+  const remainingCommands = state.commands.filter((c) => c.sessionId !== sessionId)
+  const remainingPresentations = state.presentations.filter((p) => p.sessionId !== sessionId)
+  
+  return addEvent({ 
+    ...state, 
+    commands: remainingCommands,
+    presentations: remainingPresentations
+  }, {
+    sessionId,
+    type: 'OLD_COMMANDS_CLEARED',
+    actor: 'admin',
+    message: 'Очищено історію команд та локальні відомості про презентації',
+    payload: { sessionId }
   })
 }
 

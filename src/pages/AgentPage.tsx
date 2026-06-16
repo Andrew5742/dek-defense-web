@@ -1,5 +1,5 @@
 import type { AppState, DefenseSession } from '../shared/types'
-import { openLatestPresentation } from '../services/actions'
+import { openLatestPresentation, clearOldCommands } from '../services/actions'
 import { getBlob } from '../services/localRepository'
 import { StatusBadge } from '../components/StatusBadge'
 
@@ -72,7 +72,10 @@ export function AgentPage({ state, setState, activeSession }: Props) {
       })}</tbody></table>
     </div>
     <div className="panel">
-      <h2>Останні команди</h2>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h2>Останні команди</h2>
+        <button className="secondary" onClick={() => setState(clearOldCommands(state, activeSession.id))}>Очистити історію</button>
+      </div>
       {commands.length === 0 && <div className="empty">Команд ще немає.</div>}
       {commands.map((c) => <div className="list-row" key={c.id}><span>{c.type} · {students.get(c.studentId || '')?.fullName || c.studentId || 'сесія'} · <StatusBadge value={c.status} />{c.targetStationId ? <><br/><small>station: {c.targetStationId}</small></> : null}{c.error ? <><br/><small>{c.error}</small></> : null}</span></div>)}
     </div>

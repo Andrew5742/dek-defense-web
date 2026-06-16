@@ -7,7 +7,6 @@ const { app, BrowserWindow, ipcMain, shell, powerSaveBlocker } = require('electr
 const { spawn } = require('child_process');
 const Store = require('electron-store');
 const { createFirebaseClient } = require('./lib/firebaseClient');
-const { startUploadServer } = require('./lib/uploadServer');
 const { FirestoreAgent } = require('./lib/firestoreAgent');
 const { getLocalIPv4Addresses, getPreferredLocalAddress } = require('./lib/network');
 const { getStorageRoot } = require('./lib/paths');
@@ -19,11 +18,11 @@ let presentationWindow;
 let displayWindow;
 let firebase;
 let agent;
-let uploadServer;
 let powerBlockerId = null;
 
 const STATION_ID = process.env.STATION_ID || store.get('stationId') || `station-${Date.now()}`;
-const STATION_NAME = process.env.STATION_NAME || 'ПК захисту';
+const os = require('os');
+const STATION_NAME = process.env.STATION_NAME || os.hostname() || '\u041F\u041A \u0437\u0430\u0445\u0438\u0441\u0442\u0443';
 const UPLOAD_PORT = Number(process.env.UPLOAD_PORT || 3050);
 const ZOOM_URL = process.env.ZOOM_URL || '';
 const WEB_APP_URL = process.env.WEB_APP_URL || process.env.VITE_PUBLIC_APP_URL || 'https://dek-defence.web.app/';
@@ -41,9 +40,16 @@ function sendToRenderer(channel, payload) {
 }
 
 async function createMainWindow() {
-  mainWindow = new BrowserWindow({
+  const windowState = store.get('windowState', {
     width: 1280,
     height: 820,
+  });
+
+  mainWindow = new BrowserWindow({
+    width: windowState.width,
+    height: windowState.height,
+    x: windowState.x,
+    y: windowState.y,
     minWidth: 980,
     minHeight: 640,
     autoHideMenuBar: true,
@@ -55,6 +61,25 @@ async function createMainWindow() {
       nodeIntegration: false
     }
   });
+
+  if (windowState.isMaximized) {
+    mainWindow.maximize();
+  }
+
+  const saveWindowState = () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      const bounds = mainWindow.getBounds();
+      store.set('windowState', {
+        ...bounds,
+        isMaximized: mainWindow.isMaximized()
+      });
+    }
+  };
+
+  mainWindow.on('resize', saveWindowState);
+  mainWindow.on('move', saveWindowState);
+  mainWindow.on('maximize', saveWindowState);
+  mainWindow.on('unmaximize', saveWindowState);
 
   const url = new URL(WEB_APP_URL);
   url.searchParams.set('desktop', 'defense');
@@ -68,20 +93,27 @@ async function createMainWindow() {
 
 function openDisplayFullscreen(command = {}) {
   if (displayWindow && !displayWindow.isDestroyed()) {
+    // Display already exists — bring it to front WITHOUT minimizing anything else
+    displayWindow.setAlwaysOnTop(false);
     displayWindow.show();
-    displayWindow.setAlwaysOnTop(true, 'screen-saver');
     displayWindow.setFullScreen(true);
     displayWindow.moveTop();
     displayWindow.focus();
     return;
   }
 
+  const { screen } = require('electron');
+  const bounds = screen.getPrimaryDisplay().bounds;
+
   displayWindow = new BrowserWindow({
-    fullscreen: true,
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+    show: false,
     autoHideMenuBar: true,
     frame: false,
     backgroundColor: '#111827',
-    alwaysOnTop: true,
     icon: getAppIconPath(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -89,9 +121,11 @@ function openDisplayFullscreen(command = {}) {
       nodeIntegration: false
     }
   });
-  displayWindow.setAlwaysOnTop(true, 'screen-saver');
   displayWindow.once('ready-to-show', () => {
+    displayWindow.setKiosk(false);
     displayWindow.setFullScreen(true);
+    displayWindow.show();
+    displayWindow.setAlwaysOnTop(false);
     displayWindow.moveTop();
     displayWindow.focus();
   });
@@ -351,7 +385,6 @@ if ($slideShow -ne $null) {
     Focus-Hwnd $slideShow.HWND
   } catch {}
 }
-try { $powerPoint.WindowState = 2 } catch {}
 `;
     const child = spawn('powershell.exe', [
       '-NoProfile',
@@ -385,18 +418,24 @@ try { $powerPoint.WindowState = 2 } catch {}
 }
 
 async function openPresentationFullscreen(prepared, command = {}) {
+  // Close any existing presentation (PDF viewer) but NEVER close the display window
   await closePresentationFullscreen();
-  closeDisplayFullscreen();
+  // Lower display below presentation level (don't close it)
+  if (displayWindow && !displayWindow.isDestroyed()) {
+    displayWindow.setAlwaysOnTop(false);
+  }
   if (prepared.kind === 'pdf') {
     openPdfFullscreen(prepared.path, command);
     return;
   }
   try {
+    await openPowerPointFullscreen(prepared.path);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await focusPowerPointSlideShow();
+  } catch {
     await openPowerPointProcessFallback(prepared.path);
     await new Promise((resolve) => setTimeout(resolve, 900));
     await focusPowerPointSlideShow();
-  } catch {
-    await openPowerPointFullscreen(prepared.path);
   }
 }
 
@@ -427,23 +466,18 @@ async function openUploadPage(command = {}) {
   mainWindow.maximize();
   mainWindow.moveTop();
   mainWindow.focus();
-  await mainWindow.loadURL(url.toString());
+  await mainWindow.loadURL(returnUrl.toString());
 }
 
 async function startAgent() {
   if (!firebase) firebase = await createFirebaseClient();
 
-  uploadServer = startUploadServer({
-    port: UPLOAD_PORT,
-    onUploaded: async (payload) => agent?.onUploaded(payload)
-  });
-
   agent = new FirestoreAgent({
     firebase,
     stationId: STATION_ID,
     stationName: STATION_NAME,
-    uploadUrl: uploadServer.localUrl,
-    lanUploadUrl: uploadServer.lanUrl,
+    uploadUrl: '',
+    lanUploadUrl: '',
     zoomUrl: ZOOM_URL,
     sendToRenderer,
     openPdfFullscreen,
@@ -463,14 +497,16 @@ async function startAgent() {
   sendToRenderer('agent-ready', {
     stationId: STATION_ID,
     stationName: STATION_NAME,
-    uploadUrl: uploadServer.localUrl,
-    lanUploadUrl: uploadServer.lanUrl,
+    uploadUrl: '',
+    lanUploadUrl: '',
     storageRoot: getStorageRoot(),
     addresses: getLocalIPv4Addresses()
   });
 }
 
 app.whenReady().then(async () => {
+  const { session } = require('electron');
+  await session.defaultSession.clearCache();
   await createMainWindow();
   try {
     await startAgent();
@@ -485,15 +521,14 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   agent?.stop();
-  uploadServer?.close();
   if (powerBlockerId) powerSaveBlocker.stop(powerBlockerId);
 });
 
 ipcMain.handle('agent:get-status', async () => ({
   stationId: STATION_ID,
   stationName: STATION_NAME,
-  uploadUrl: uploadServer?.localUrl || `http://${getPreferredLocalAddress()}:${UPLOAD_PORT}`,
-  lanUploadUrl: uploadServer?.lanUrl || `http://${getPreferredLocalAddress()}:${UPLOAD_PORT}`,
+  uploadUrl: '',
+  lanUploadUrl: '',
   storageRoot: getStorageRoot(),
   addresses: getLocalIPv4Addresses()
 }));
@@ -502,19 +537,51 @@ ipcMain.handle('agent:open-storage', async () => {
   await shell.openPath(getStorageRoot());
 });
 
+ipcMain.handle('agent:change-storage', async () => {
+  const { dialog } = require('electron');
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory'],
+    title: 'Оберіть папку для презентацій'
+  });
+  if (!result.canceled && result.filePaths.length > 0) {
+    store.set('storageRoot', result.filePaths[0]);
+    return result.filePaths[0];
+  }
+  return null;
+});
+
+ipcMain.handle('agent:get-storage', () => {
+  return getStorageRoot();
+});
+
+ipcMain.handle('agent:delete-presentation', async (_, sessionId, studentId) => {
+  const { getStudentPresentationDir } = require('./lib/paths');
+  const dir = getStudentPresentationDir(sessionId, studentId);
+  if (fs.existsSync(dir)) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  return true;
+});
+
 ipcMain.handle('agent:open-zoom', async (_, zoomUrl) => {
   await openZoomMeeting(shell, zoomUrl || ZOOM_URL);
 });
 
-ipcMain.handle('agent:set-kiosk-mode', async (_, enabled) => {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.setKiosk(Boolean(enabled));
-    mainWindow.setFullScreen(Boolean(enabled));
+ipcMain.handle('agent:set-kiosk-mode', async (event, enabled) => {
+  const { BrowserWindow } = require('electron');
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (win && !win.isDestroyed()) {
     if (enabled) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.show();
-      mainWindow.moveTop();
-      mainWindow.focus();
+      if (win.isMinimized()) win.restore();
+      if (win.isMaximized()) win.unmaximize();
+      win.setFullScreen(true);
+      win.setKiosk(true);
+      win.show();
+      win.moveTop();
+      win.focus();
+    } else {
+      win.setKiosk(false);
+      win.setFullScreen(false);
     }
   }
   return true;
@@ -525,4 +592,59 @@ ipcMain.handle('agent:close-presentation', async (_, password) => {
   await closePresentationFullscreen();
   if (displayWindow && !displayWindow.isDestroyed()) displayWindow.close();
   return true;
+});
+
+ipcMain.handle('agent:list-drives', async () => {
+  if (process.platform !== 'win32') return [];
+  return new Promise((resolve) => {
+    const { exec } = require('child_process');
+    exec('wmic logicaldisk get name,volumename,description', (err, stdout) => {
+      if (err) return resolve([]);
+      const lines = stdout.split('\n').map(l => l.trim()).filter(Boolean);
+      lines.shift(); // remove header
+      const drives = lines.map(line => {
+        const parts = line.split(/\s{2,}/);
+        return {
+          path: parts[1] || parts[0],
+          name: parts.length > 2 ? parts[2] : (parts[1] || parts[0]),
+          description: parts[0]
+        };
+      }).filter(d => d.path && d.path.endsWith(':'));
+      resolve(drives);
+    });
+  });
+});
+
+ipcMain.handle('agent:read-dir', async (_, dirPath) => {
+  try {
+    const files = fs.readdirSync(dirPath, { withFileTypes: true });
+    return files
+      .filter(f => !f.name.startsWith('$') && !f.name.startsWith('System Volume'))
+      .map(f => ({
+        name: f.name,
+        isDirectory: f.isDirectory(),
+        path: path.join(dirPath, f.name)
+      }));
+  } catch (e) {
+    return [];
+  }
+});
+
+ipcMain.handle('agent:upload-local-files', async (_, files, studentId, sessionId) => {
+  if (!studentId || !sessionId) throw new Error('Missing studentId or sessionId');
+  const { getStudentPresentationDir } = require('./lib/paths');
+  const dir = getStudentPresentationDir(sessionId, studentId);
+  fs.mkdirSync(dir, { recursive: true });
+
+  const uploaded = [];
+  for (const file of files) {
+    const ext = path.extname(file).toLowerCase();
+    if (!['.pptx', '.ppt', '.pdf', '.odp', '.mp4', '.mov', '.avi', '.mkv', '.webm'].includes(ext)) continue;
+    const fileName = path.basename(file);
+    const dest = path.join(dir, fileName);
+    fs.copyFileSync(file, dest);
+    uploaded.push({ originalFileName: fileName, storedName: fileName, path: dest, extension: ext.replace('.', '') });
+  }
+
+  return uploaded;
 });

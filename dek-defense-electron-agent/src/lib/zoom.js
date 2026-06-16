@@ -78,7 +78,14 @@ if ($target) {
 }
 
 async function openZoomMeeting(shell, value) {
-  await shell.openExternal(normalizeZoomLaunchUrl(value));
+  try {
+    const launchUrl = normalizeZoomLaunchUrl(value);
+    await shell.openExternal(launchUrl).catch(() => { throw new Error('openExternal failed'); });
+  } catch (error) {
+    if (value && (value.startsWith('http://') || value.startsWith('https://'))) {
+      await shell.openExternal(value).catch(console.error);
+    }
+  }
   await delay(900);
   await focusZoomMeetingWindow();
   await delay(900);

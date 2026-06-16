@@ -45,6 +45,7 @@ export type EventType =
   | 'STUDENT_REGISTERED'
   | 'QUEUE_REMOVED'
   | 'PRESENTATION_UPLOADED'
+  | 'PRESENTATION_STATUS_CHANGED'
   | 'QUEUE_REORDERED'
   | 'REGISTRATION_LOCK_CHANGED'
   | 'PRESENTATION_OPEN_REQUESTED'
@@ -56,6 +57,7 @@ export type EventType =
   | 'DEFENSE_STATUS_CHANGED'
   | 'NOTE_ADDED'
   | 'BACKUP_EXPORTED'
+  | 'OLD_COMMANDS_CLEARED'
 
 export interface DefenseSession {
   id: string
@@ -71,6 +73,7 @@ export interface DefenseSession {
   publicToken: string
   stationId?: string
   mobileDisplaySettings?: MobileDisplaySettings
+  sortOrder?: number
   createdAt: string
   updatedAt: string
 }
@@ -114,6 +117,7 @@ export interface Student {
   workLevel?: string
   reviewerGrade?: string
   projectGrade?: string
+  supervisorGrade?: string
   notes?: string
   token?: string
   registrationConfirmed?: boolean

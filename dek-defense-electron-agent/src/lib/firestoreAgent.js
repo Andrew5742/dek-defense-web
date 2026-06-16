@@ -142,7 +142,7 @@ class FirestoreAgent {
 
   async start() {
     await this.updateStation({ online: true });
-    this.heartbeatTimer = setInterval(() => this.updateStation({ online: true }).catch(() => {}), 10000);
+    this.heartbeatTimer = setInterval(() => this.updateStation({ online: true }).catch(() => {}), 120000);
     this.listenCommands();
   }
 
@@ -415,26 +415,56 @@ class FirestoreAgent {
       state: withoutUndefined(next),
       updatedAt: serverTimestamp()
     }, { merge: true });
-    await this.updatePublicMobileDocs(next);
+    await this.updatePublicMobileDocs(next, base);
     return { token: studentToken, queuePosition };
   }
 
-  async updatePublicMobileDocs(state) {
+  async updatePublicMobileDocs(state, baseState = null) {
     const { deleteDoc, doc, setDoc } = this.firebase;
     const queueByStudent = new Map((state.queue || []).map((item) => [item.studentId, item]));
+    const baseQueueByStudent = baseState ? new Map((baseState.queue || []).map((item) => [item.studentId, item])) : new Map();
+    const basePages = new Map();
+
+    if (baseState) {
+      for (const student of baseState.students || []) {
+        if (!isStudentPageExpired(student)) {
+          const p = buildPublicStudentPage(student, baseQueueByStudent.get(student.id));
+          if (p) basePages.set(student.id, JSON.stringify(withoutUndefined(p)));
+        }
+      }
+    }
+
+    const promises = [];
     for (const student of state.students || []) {
       const token = student.token || student.id;
       if (isStudentPageExpired(student)) {
-        await deleteDoc(doc(this.db, 'student_pages', token));
+        if (!baseState || basePages.has(student.id)) {
+          promises.push(deleteDoc(doc(this.db, 'student_pages', token)));
+        }
         continue;
       }
       const page = buildPublicStudentPage(student, queueByStudent.get(student.id));
       if (!page) continue;
-      await setDoc(doc(this.db, 'student_pages', page.token), withoutUndefined(page), { merge: true });
+      
+      const pageJson = JSON.stringify(withoutUndefined(page));
+      if (!baseState || basePages.get(student.id) !== pageJson) {
+        promises.push(setDoc(doc(this.db, 'student_pages', page.token), withoutUndefined(page), { merge: true }));
+      }
+    }
+    
+    const baseSessions = new Map();
+    if (baseState) {
+      for (const session of baseState.sessions || []) {
+        baseSessions.set(session.id, JSON.stringify(withoutUndefined(buildPublicMobileDisplay(baseState, session))));
+      }
     }
     for (const session of state.sessions || []) {
-      await setDoc(doc(this.db, 'mobile_display', session.id), withoutUndefined(buildPublicMobileDisplay(state, session)), { merge: true });
+      const displayJson = JSON.stringify(withoutUndefined(buildPublicMobileDisplay(state, session)));
+      if (!baseState || baseSessions.get(session.id) !== displayJson) {
+        promises.push(setDoc(doc(this.db, 'mobile_display', session.id), withoutUndefined(buildPublicMobileDisplay(state, session)), { merge: true }));
+      }
     }
+    await Promise.all(promises);
   }
 
   async onUploaded(payload) {
@@ -446,7 +476,7 @@ class FirestoreAgent {
       size: payload.size,
       localPathHint: payload.storedName,
       localOnly: true,
-      status: isPdf ? 'ready' : 'converting',
+      status: 'ready',
       uploadedAt: this.firebase.serverTimestamp(),
       convertedPdfReady: isPdf
     });

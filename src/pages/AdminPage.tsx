@@ -1,12 +1,34 @@
-import { useMemo, useState, Fragment } from 'react'
+import { useMemo, useState, useEffect, Fragment } from 'react'
 import type { AppState, DefenseSession, ImportReview, ProtocolRow, ProtocolSnapshot, Student } from '../shared/types'
 import { downloadTextFile, formatLocalDateTime, nowIso } from '../shared/utils'
-import { addManualStudent, addToQueue, confirmImportReview, createContinuationSession, createSession, removeFromQueue, removeSession, removeStudent, reorderQueue, makeNextInQueue, requestOpenPresentation, requestOpenUploadPage, requestOpenZoom, requestShowDisplay, requestStartDefenses, saveImportReview, saveProtocol, setDefenseStatus, setRegistrationLock, updateImportReview, updateSession, updateStudent } from '../services/actions'
+import { addManualStudent, addToQueue, confirmImportReview, createContinuationSession, createSession, removeFromQueue, removeSession, removeStudent, reorderQueue, reorderSession, setQueuePositionAbsolute, requestOpenPresentation, requestOpenUploadPage, requestOpenZoom, requestShowDisplay, requestStartDefenses, saveImportReview, saveProtocol, setDefenseStatus, setRegistrationLock, updateImportReview, updateSession, updateStudent, cancelRegistration } from '../services/actions'
 import { importDocx, importFromPastedText } from '../services/importService'
 import { isFirebaseEnabled } from '../services/firebaseAdapter'
 import { buildStudentTemporaryUrl, formatStudentTemporaryPath } from '../services/publicUrl'
 import { StatusBadge } from '../components/StatusBadge'
 import { StudentEditor } from '../components/StudentEditor'
+
+function formatGradeText(value: string): string {
+  const numMatch = value.match(/\d+/)
+  if (!numMatch) return value
+  const num = parseInt(numMatch[0], 10)
+  if (num >= 90 && num <= 100) return `відмінно А (${num})`
+  if (num >= 85 && num <= 89) return `добре В (${num})`
+  if (num >= 75 && num <= 84) return `добре С (${num})`
+  if (num >= 70 && num <= 74) return `задовільно D (${num})`
+  if (num >= 60 && num <= 69) return `задовільно Е (${num})`
+  return value
+}
+
+function calcWorkLevelByGrade(value: string): string {
+  const numMatch = value.match(/\d+/)
+  if (!numMatch) return ''
+  const num = parseInt(numMatch[0], 10)
+  if (num >= 90 && num <= 100) return `високому`
+  if (num >= 75 && num <= 89) return `достатньому`
+  if (num >= 60 && num <= 74) return `задовільному`
+  return ''
+}
 
 type Props = { state: AppState; setState: (s: AppState) => void; activeSession?: DefenseSession; setActiveSessionId: (id: string) => void }
 type StudentDefenseFilter = 'all' | 'defended' | 'not_defended'
@@ -23,9 +45,61 @@ const PROTOCOL_DEFAULTS: Partial<ProtocolRow> = {
   questions: ''
 }
 
+function ProblemEditor({ student, state, setState }: { student: Student; state: AppState; setState: (s: AppState) => void }) {
+  const [note, setNote] = useState(student.problemDetails?.note || '')
+  const [returnedToStudent, setReturnedToStudent] = useState(student.problemDetails?.returnedToStudent || false)
+  const [deadline, setDeadline] = useState(student.problemDetails?.deadline || '')
+
+  useEffect(() => {
+    setNote(student.problemDetails?.note || '')
+    setReturnedToStudent(student.problemDetails?.returnedToStudent || false)
+    setDeadline(student.problemDetails?.deadline || '')
+  }, [student])
+
+  function handleSave() {
+    setState(updateStudent(state, student.id, {
+      problemDetails: { note, returnedToStudent, deadline, resolved: false }
+    }))
+  }
+
+  function markResolved() {
+    setState(updateStudent(state, student.id, {
+      defenseStatus: 'defended',
+      problemDetails: { note, returnedToStudent, deadline, resolved: true }
+    }))
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6, padding: 6, background: 'rgba(254, 242, 242, 0.5)', borderRadius: 4 }}>
+      <textarea 
+        style={{ width: '100%', minHeight: 40, padding: '4px 6px', border: '1px solid #fca5a5', borderRadius: 4, fontSize: 12, resize: 'vertical' }} 
+        value={note} 
+        onChange={(e) => setNote(e.target.value)} 
+        placeholder="Зауваження для студента..." 
+      />
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <label style={{ display: 'flex', alignItems: 'center', fontSize: 12, cursor: 'pointer', fontWeight: 'bold', color: '#991b1b' }}>
+          <input type="checkbox" checked={returnedToStudent} onChange={(e) => setReturnedToStudent(e.target.checked)} style={{ marginRight: 4 }} />
+          Роботу повернуто
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', fontSize: 12, gap: 4, fontWeight: 'bold', color: '#991b1b' }}>
+          До:
+          <input type="datetime-local" style={{ padding: '2px 4px', border: '1px solid #cbd5e1', borderRadius: 4, fontSize: 12 }} value={deadline} onChange={(e) => setDeadline(e.target.value)} />
+        </label>
+      </div>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <button type="button" className="primary" onClick={handleSave} style={{ flex: 1, padding: '4px 8px', fontSize: 12, background: '#dc2626', borderColor: '#b91c1c' }}>Зберегти зауваження</button>
+        <button type="button" onClick={markResolved} style={{ flex: 1, background: '#059669', color: 'white', border: '1px solid #047857', padding: '4px 8px', borderRadius: 4, fontWeight: 'bold', fontSize: 12 }}>Вирішено</button>
+      </div>
+    </div>
+  )
+}
+
 export function AdminPage({ state, setState, activeSession, setActiveSessionId }: Props) {
   const [tab, setTab] = useState<'overview' | 'import' | 'students' | 'queue' | 'protocol' | 'diagnostics'>('overview')
   const [editingStudent, setEditingStudent] = useState<Student | null>(null)
+
+
 
   return (
     <main className="layout">
@@ -124,9 +198,11 @@ function Overview({ state, setState, activeSession, setActiveSessionId }: Props)
         </div>
         <table>
           <thead><tr><th>Назва</th><th>Дата</th><th>Запис</th><th>Групи</th><th>Дії</th></tr></thead>
-          <tbody>{state.sessions.map((s) => <tr key={s.id} className={activeSession?.id === s.id ? 'selected-row' : ''}>
+          <tbody>{[...state.sessions].sort((a, b) => (a.sortOrder ?? state.sessions.indexOf(a)) - (b.sortOrder ?? state.sessions.indexOf(b))).map((s) => <tr key={s.id} className={activeSession?.id === s.id ? 'selected-row' : ''}>
             <td>{s.title}</td><td>{s.date}</td><td>{s.registrationOpenFrom}-{s.registrationOpenTo}</td><td>{s.groupNames.join(', ') || '-'}</td>
             <td className="actions compact-actions">
+              <button onClick={() => setState(reorderSession(state, s.id, -1))} style={{ padding: '4px 8px' }}>▲</button>
+              <button onClick={() => setState(reorderSession(state, s.id, 1))} style={{ padding: '4px 8px' }}>▼</button>
               <button onClick={() => {
                 setActiveSessionId(s.id)
                 setState({ ...state, activeSessionId: s.id })
@@ -157,7 +233,7 @@ function Overview({ state, setState, activeSession, setActiveSessionId }: Props)
       </div>}
       {activeSession && <div className="panel">
         <h2>Режим захистів</h2>
-        <div className="toolbar">
+        <div className="toolbar sticky-toolbar">
           <button className="primary" onClick={() => setState(requestStartDefenses(state, activeSession.id))}>Почати захисти</button>
           <button onClick={() => setState(requestShowDisplay(state, activeSession.id))}>Показати Display на ПК захисту</button>
           <button onClick={() => setState(requestOpenZoom(state, activeSession.id))}>Відкрити Zoom meeting</button>
@@ -324,7 +400,7 @@ function QueuePanel({ state, setState, session, onEdit }: { state: AppState; set
 
   return <div>
     <h1>Черга захисту</h1>
-    <div className="toolbar">
+    <div className="toolbar sticky-toolbar">
       <button onClick={() => setState(setRegistrationLock(state, session.id, true, false))}>Закрити запис</button>
       <button onClick={() => setState(setRegistrationLock(state, session.id, false, true))}>Ручне розблокування</button>
       <button className="primary" onClick={() => setState(requestStartDefenses(state, session.id))}>Почати захисти</button>
@@ -363,39 +439,139 @@ function QueuePanel({ state, setState, session, onEdit }: { state: AppState; set
     </div>
     <div className="panel">
       <h2>Поточна черга</h2>
+      {!queue.some(q => {
+        const s = byId.get(q.studentId)
+        return s && (s.defenseStatus === 'presenting' || s.defenseStatus === 'defended')
+      }) && queue.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <p style={{ margin: '0 0 8px', fontSize: 14, color: '#64748b' }}>До початку захисту черга у текстовому вигляді (можна скопіювати):</p>
+          <textarea readOnly value={queue.map((q, i) => {
+            const s = byId.get(q.studentId)
+            return s ? `${i + 1}. ${s.fullName} (${s.groupName})` : ''
+          }).filter(Boolean).join('\n')} style={{ width: '100%', minHeight: 120, padding: 12, fontFamily: 'monospace', fontSize: 14, border: '1px solid #cbd5e1', background: '#f8fafc' }} />
+        </div>
+      )}
       <table>
         <thead><tr><th style={{width: 40}}>№</th><th>ПІБ, Група</th><th>Формат</th><th>Презентація</th><th>QR / Сторінка</th><th>Захист</th><th>Дії</th></tr></thead>
-        <tbody>{queue.map((q) => {
-          const s = byId.get(q.studentId); if (!s) return null
-          const hasPresentation = s.presentationStatus === 'ready' || s.presentationStatus === 'conversion_required'
-          const qrStatus = !hasPresentation ? 'Не створено' : s.registrationConfirmed ? 'Відкрито' : 'Створено'
-          return <Fragment key={q.id}>
-            <tr className={s.defenseStatus === 'presenting' ? 'active-row' : ''}>
-              <td>{q.position}</td>
-              <td><b>{s.fullName}</b><br/><small>{s.groupName}</small></td>
+        <tbody>{(() => {
+          let waitingCount = 0
+          const defensesStarted = queue.some(q => {
+            const s = byId.get(q.studentId)
+            return s && s.defenseStatus !== 'waiting'
+          })
+          return queue.map((q) => {
+            const s = byId.get(q.studentId); if (!s) return null
+            const hasPresentation = s.presentationStatus === 'ready' || s.presentationStatus === 'conversion_required'
+            const qrStatus = !hasPresentation ? 'Не створено' : s.registrationConfirmed ? 'Відкрито' : 'Створено'
+            
+            let isTop5 = false
+            if (s.defenseStatus === 'waiting') {
+              waitingCount++
+              if (waitingCount <= 5) isTop5 = true
+            }
+
+            const isOnline = s.defenseFormat === 'online'
+            const rowClass = s.defenseStatus === 'presenting' ? 'active-row' : s.defenseStatus === 'problem' ? 'problem-row' : isTop5 && defensesStarted ? 'top5-row' : ''
+            const rowStyle = !rowClass && isOnline ? { background: 'rgba(56, 189, 248, 0.15)' } : {}
+
+            return <Fragment key={q.id}>
+              <tr className={rowClass} style={rowStyle}>
+                <td style={{ textAlign: 'center' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                  <button onClick={() => setState(reorderQueue(state, session.id, s.id, -1))} disabled={q.position <= 1} style={{ padding: '0 4px', fontSize: 10 }}>▲</button>
+                  <input
+                    type="number"
+                    min={1}
+                    max={queue.length}
+                    value={q.position}
+                    onChange={(e) => {
+                      const newPos = parseInt(e.target.value, 10);
+                      if (!isNaN(newPos) && newPos !== q.position) {
+                        setState(setQueuePositionAbsolute(state, session.id, s.id, newPos));
+                      }
+                    }}
+                    style={{ width: 44, textAlign: 'center', padding: '2px 0', border: '1px solid #475569', background: '#1e293b', color: 'white', WebkitAppearance: 'none', margin: 0 }}
+                  />
+                  <button onClick={() => setState(reorderQueue(state, session.id, s.id, 1))} disabled={q.position >= queue.length} style={{ padding: '0 4px', fontSize: 10 }}>▼</button>
+                </div>
+              </td>
+              <td>
+                <b>{s.fullName}</b><br/><small>{s.groupName}</small>
+                {s.defenseStatus === 'problem' && <ProblemEditor student={s} state={state} setState={setState} />}
+              </td>
               <td><StatusBadge value={s.defenseFormat || 'offline'} /></td>
               <td><StatusBadge value={s.presentationStatus} /></td>
               <td><span style={{ color: s.registrationConfirmed ? '#059669' : hasPresentation ? '#d97706' : '#94a3b8', fontWeight: 'bold' }}>{qrStatus}</span></td>
               <td><StatusBadge value={s.defenseStatus} /></td>
-              <td className="actions" style={{ display: 'flex', flexWrap: 'wrap', gap: 4, maxWidth: 300 }}>
-                <button disabled={!hasPresentation} onClick={() => setShowQrToken(showQrToken === s.id ? null : s.id)}>Показати QR</button>
-                <button onClick={() => {
-                  const token = s.token || s.id;
-                  const url = buildStudentTemporaryUrl(token);
-                  navigator.clipboard?.writeText(url).catch(() => alert(`URL: ${url}`));
-                }}>Скопіювати лінк</button>
-                <button onClick={() => setState(makeNextInQueue(state, session.id, s.id))}>Поставити наступним</button>
-                <button onClick={() => setState(reorderQueue(state, session.id, s.id, 1))}>Перенести нижче</button>
-                <button onClick={() => setState(requestOpenPresentation(state, session.id, s.id))}>Відкрити презентацію</button>
-                {(s.defenseFormat || 'offline') === 'online' && <button onClick={() => setState(requestOpenZoom(state, session.id, s.id))}>Відкрити Zoom</button>}
-                <button onClick={() => setState(setDefenseStatus(state, s.id, 'presenting'))}>Захищається</button>
-                <button onClick={() => setState(setDefenseStatus(state, s.id, 'defended'))}>Захистився</button>
-                <button onClick={() => setState(setDefenseStatus(state, s.id, 'problem'))}>Проблема</button>
-                <button onClick={() => setState(setDefenseStatus(state, s.id, 'absent'))}>Відсутній</button>
-                <button onClick={() => onEdit(s)}>Ред.</button>
-                <button onClick={() => setState(removeFromQueue(state, session.id, s.id))} className="danger">З черги</button>
+              <td className="actions">
+                <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+                  <button onClick={() => setShowQrToken(showQrToken === s.id ? null : s.id)} disabled={!hasPresentation}>Показати QR</button>
+                  <button onClick={() => {
+                    const token = s.token || s.id;
+                    const url = buildStudentTemporaryUrl(token);
+                    navigator.clipboard?.writeText(url).catch(() => alert(`URL: ${url}`));
+                  }}>Скопіювати лінк</button>
+                </div>
+                <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+                  <button onClick={() => setState(requestOpenUploadPage(state, session.id, s.id))}>Завантажити презентацію (Agent)</button>
+                </div>
+                <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+                  <button onClick={() => setState(requestOpenPresentation(state, session.id, s.id))}>Відкрити презентацію</button>
+                  {(s.defenseFormat || 'offline') === 'online' && <button onClick={() => setState(requestOpenZoom(state, session.id, s.id))}>Відкрити Zoom</button>}
+                </div>
+                <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+                  <button onClick={() => setState(setDefenseStatus(state, s.id, 'presenting'))}>Захищається</button>
+                  <button onClick={() => setState(setDefenseStatus(state, s.id, 'defended'))}>Захистився</button>
+                  <button onClick={() => setState(setDefenseStatus(state, s.id, 'problem'))}>Проблема</button>
+                  <button onClick={() => setState(setDefenseStatus(state, s.id, 'absent'))}>Відсутній</button>
+                </div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button onClick={() => onEdit(s)}>Ред.</button>
+                  <button onClick={() => { if (confirm('Анулювати запис студента (презентація і черга будуть очищені)?')) setState(cancelRegistration(state, session.id, s.id)) }} className="danger">Анулювати запис</button>
+                  <button onClick={() => setState(removeFromQueue(state, session.id, s.id))} className="danger">З черги</button>
+                </div>
               </td>
             </tr>
+            {s.defenseStatus === 'presenting' && (
+              <tr style={{ background: '#f8fafc' }}>
+                <td colSpan={7} style={{ padding: '8px 16px', borderBottom: '2px solid #cbd5e1' }}>
+                  <div style={{ display: 'flex', gap: 15, alignItems: 'center', flexWrap: 'wrap', fontSize: 13, color: '#334155' }}>
+                    <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+                      <b>Оц. керівника:</b> <input value={s.supervisorGrade || ''} onBlur={(e) => {
+                        const grade = formatGradeText(e.target.value);
+                        const level = calcWorkLevelByGrade(e.target.value);
+                        setState(updateStudent(state, s.id, { supervisorGrade: grade, workLevel: level || s.workLevel }));
+                      }} onChange={(e) => setState(updateStudent(state, s.id, { supervisorGrade: e.target.value }))} style={{ width: 100, padding: 4, background: 'white', color: 'black', border: '1px solid #94a3b8' }} placeholder="95" />
+                    </label>
+                    <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+                      <b>Оц. реценз.:</b> <input value={s.reviewerGrade || ''} onChange={(e) => setState(updateStudent(state, s.id, { reviewerGrade: e.target.value }))} style={{ width: 100, padding: 4, background: 'white', color: 'black', border: '1px solid #94a3b8' }} placeholder="90" />
+                    </label>
+                    <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+                      <b>Оц. комісії:</b> <input value={s.projectGrade || ''} onBlur={(e) => {
+                        const grade = formatGradeText(e.target.value);
+                        const level = calcWorkLevelByGrade(e.target.value);
+                        setState(updateStudent(state, s.id, { projectGrade: grade, workLevel: level || s.workLevel }));
+                      }} onChange={(e) => setState(updateStudent(state, s.id, { projectGrade: e.target.value }))} style={{ width: 100, padding: 4, background: 'white', color: 'black', border: '1px solid #94a3b8' }} placeholder="95" />
+                    </label>
+                    <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+                      <b>Виконано на рівні:</b>
+                      <select value={s.workLevel || ''} onChange={(e) => setState(updateStudent(state, s.id, { workLevel: e.target.value }))} style={{ padding: 4, background: 'white', color: 'black', border: '1px solid #94a3b8' }}>
+                        <option value="">Не обрано</option>
+                        <option value="високому">Високому</option>
+                        <option value="достатньому">Достатньому</option>
+                        <option value="задовільному">Задовільному</option>
+                      </select>
+                    </label>
+                    <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+                      <b>Сторінок:</b> <input type="number" value={s.pagesCount || ''} onChange={(e) => setState(updateStudent(state, s.id, { pagesCount: e.target.value }))} style={{ width: 60, padding: 4, background: 'white', color: 'black', border: '1px solid #94a3b8' }} />
+                    </label>
+                    <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+                      <b>Креслень:</b> <input type="number" value={s.drawingsCount || ''} onChange={(e) => setState(updateStudent(state, s.id, { drawingsCount: e.target.value }))} style={{ width: 60, padding: 4, background: 'white', color: 'black', border: '1px solid #94a3b8' }} />
+                    </label>
+                  </div>
+                </td>
+              </tr>
+            )}
             {showQrToken === s.id && hasPresentation && (
               <tr>
                 <td colSpan={7} style={{ background: '#f8fafc', padding: 20, textAlign: 'center', borderBottom: '2px solid #cbd5e1' }}>
@@ -409,32 +585,8 @@ function QueuePanel({ state, setState, session, onEdit }: { state: AppState; set
                 </td>
               </tr>
             )}
-            {s.defenseStatus === 'problem' && (
-              <tr>
-                <td colSpan={7} style={{ background: '#fef2f2', padding: 12, borderBottom: '2px solid #fca5a5' }}>
-                  <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
-                    <div style={{ flex: 1 }}>
-                      <label style={{ display: 'block', marginBottom: 8, fontWeight: 'bold', color: '#991b1b' }}>Зауваження (відобразиться у студента):
-                        <textarea style={{ width: '100%', minHeight: 60, padding: 8, marginTop: 4, border: '1px solid #fca5a5', borderRadius: 4 }} value={s.problemDetails?.note || ''} onChange={(e) => setState(updateStudent(state, s.id, { problemDetails: { ...s.problemDetails, note: e.target.value, resolved: false, returnedToStudent: s.problemDetails?.returnedToStudent || false, deadline: s.problemDetails?.deadline || '' } }))} placeholder="Вкажіть, що треба виправити" />
-                      </label>
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <label style={{ display: 'block', marginBottom: 12, cursor: 'pointer', fontWeight: 'bold' }}>
-                        <input type="checkbox" checked={s.problemDetails?.returnedToStudent || false} onChange={(e) => setState(updateStudent(state, s.id, { problemDetails: { ...s.problemDetails, returnedToStudent: e.target.checked, note: s.problemDetails?.note || '', resolved: false, deadline: s.problemDetails?.deadline || '' } }))} style={{ marginRight: 8 }} />
-                        Роботу передано студенту на руки
-                      </label>
-                      <label style={{ display: 'block', marginBottom: 12, fontWeight: 'bold' }}>Внести правки до:
-                        <input type="datetime-local" style={{ width: '100%', maxWidth: 200, padding: 8, marginTop: 4, border: '1px solid #cbd5e1', borderRadius: 4 }} value={s.problemDetails?.deadline || ''} onChange={(e) => setState(updateStudent(state, s.id, { problemDetails: { ...s.problemDetails, deadline: e.target.value, note: s.problemDetails?.note || '', resolved: false, returnedToStudent: s.problemDetails?.returnedToStudent || false } }))} />
-                      </label>
-                      <button type="button" onClick={(e) => { const el = e.currentTarget; el.textContent = '✓ Збережено'; setTimeout(() => { if (el) el.textContent = 'Зберегти зауваження'; }, 2000); }} style={{ background: '#3b82f6', color: 'white', border: '1px solid #2563eb', padding: '8px 16px', borderRadius: 4, cursor: 'pointer', fontWeight: 'bold', width: '100%', marginBottom: 12 }}>Зберегти зауваження</button>
-                      <button type="button" onClick={() => setState(updateStudent(state, s.id, { defenseStatus: 'defended', problemDetails: { ...s.problemDetails, resolved: true, note: s.problemDetails?.note || '', returnedToStudent: s.problemDetails?.returnedToStudent || false, deadline: s.problemDetails?.deadline || '' } }))} style={{ background: '#059669', color: 'white', border: '1px solid #047857', padding: '8px 16px', borderRadius: 4, cursor: 'pointer', fontWeight: 'bold', width: '100%' }}>Проблеми вирішено / роботу прийнято</button>
-                    </div>
-                  </div>
-                </td>
-              </tr>
-            )}
           </Fragment>
-        })}</tbody>
+        })})()}</tbody>
       </table>
     </div>
     <div className="panel">
@@ -659,6 +811,10 @@ function DiagnosticsPanel({ state, activeSession }: { state: AppState; activeSes
       <li>Upload URL Agent: {onlineStations.length ? onlineStations.map((s) => s.lanUploadUrl || s.localUploadUrl || 'без upload URL').join(', ') : '-'}</li>
       <li>Команди агента pending: {pendingCommands}</li>
       <li>Команди з помилкою: {failedCommands}</li>
+      <li>
+        Об'єм стану (KB):
+        {Object.keys(state).map(k => `${k}: ${Math.round(JSON.stringify(state[k as keyof typeof state]).length / 1024)}`).join(', ')}
+      </li>
     </ul>
     {!onlineStations.length && <p className="hint">Якщо презентації мають відкриватися на ПК захисту, запустіть Electron Agent на цьому ПК і перевірте Firestore rules для dek_stations/dek_commands.</p>}
   </div></div>

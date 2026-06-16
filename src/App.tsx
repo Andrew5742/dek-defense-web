@@ -173,6 +173,7 @@ function DefenseApp() {
   const repository = firebaseRepository || localRepository
   const saveTimeoutRef = useRef<number>(0)
   const localSaveTimestampRef = useRef<number>(0)
+  const forcedSessionIdRef = useRef<string | null>(null)
 
   useEffect(() => {
     let disposed = false
@@ -196,6 +197,7 @@ function DefenseApp() {
       setStateRaw(s)
       const params = new URLSearchParams(location.search)
       const sessionFromUrl = params.get('session')
+      forcedSessionIdRef.current = sessionFromUrl
       setActiveSessionId(sessionFromUrl || s.activeSessionId || s.sessions[0]?.id || '')
       setLoaded(true)
     }).catch((error) => {
@@ -244,7 +246,12 @@ function DefenseApp() {
       } else {
         setStateRaw(next)
       }
-      setActiveSessionId((current) => current || next.activeSessionId || next.sessions[0]?.id || '')
+      const forcedSessionId = forcedSessionIdRef.current
+      if (forcedSessionId && next.sessions.some((session) => session.id === forcedSessionId)) {
+        setActiveSessionId(forcedSessionId)
+      } else {
+        setActiveSessionId(next.activeSessionId || next.sessions[0]?.id || '')
+      }
     })
 
     return () => {

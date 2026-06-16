@@ -152,6 +152,24 @@ function closeDisplayFullscreen() {
   }
 }
 
+function bringDisplayToFront() {
+  if (!displayWindow || displayWindow.isDestroyed()) return;
+  displayWindow.setFocusable(true);
+  if (displayWindow.isMinimized()) displayWindow.restore();
+  displayWindow.show();
+  displayWindow.setFullScreen(true);
+  displayWindow.setAlwaysOnTop(false);
+  displayWindow.moveTop();
+  displayWindow.focus();
+}
+
+function releaseDisplayFocus() {
+  if (!displayWindow || displayWindow.isDestroyed()) return;
+  displayWindow.setAlwaysOnTop(false);
+  displayWindow.blur();
+  displayWindow.setFocusable(false);
+}
+
 function closePowerPointSlideShows() {
   if (process.platform !== 'win32') return Promise.resolve(false);
   return new Promise((resolve) => {
@@ -194,6 +212,7 @@ foreach ($process in @($remaining)) {
 async function closePresentationFullscreen() {
   if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
   await closePowerPointSlideShows();
+  bringDisplayToFront();
 }
 
 function openPdfFullscreen(pdfPath, command = {}) {
@@ -425,17 +444,22 @@ async function openPresentationFullscreen(prepared, command = {}) {
     displayWindow.setAlwaysOnTop(false);
   }
   if (prepared.kind === 'pdf') {
+    if (displayWindow && !displayWindow.isDestroyed()) displayWindow.setFocusable(true);
     openPdfFullscreen(prepared.path, command);
     return;
   }
   try {
+    releaseDisplayFocus();
     await openPowerPointFullscreen(prepared.path);
     await new Promise((resolve) => setTimeout(resolve, 300));
     await focusPowerPointSlideShow();
   } catch {
+    releaseDisplayFocus();
     await openPowerPointProcessFallback(prepared.path);
     await new Promise((resolve) => setTimeout(resolve, 900));
     await focusPowerPointSlideShow();
+  } finally {
+    if (displayWindow && !displayWindow.isDestroyed()) displayWindow.setFocusable(true);
   }
 }
 

@@ -298,11 +298,11 @@ foreach ($process in @($remaining)) {
 }
 
 async function closePresentationFullscreen(options = {}) {
-  const { restoreDisplay = true } = options;
+  const { restoreDisplay = true, restoreTaskbar = restoreDisplay } = options;
   if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
   await closePowerPointSlideShows();
   if (restoreDisplay) bringDisplayToFront();
-  else setWindowsTaskbarVisible(true);
+  else if (restoreTaskbar) setWindowsTaskbarVisible(true);
 }
 
 function openPdfFullscreen(pdfPath, command = {}) {
@@ -571,7 +571,7 @@ async function openPresentationFullscreen(prepared, command = {}) {
   // A presentation owns the projector screen. Close Display instead of trying
   // to keep it behind the slideshow, which is unreliable with PowerPoint focus.
   releaseMainWindowFocus();
-  await closePresentationFullscreen({ restoreDisplay: false });
+  await closePresentationFullscreen({ restoreDisplay: false, restoreTaskbar: false });
   await closeDisplayFullscreen({ restoreMain: false });
   setWindowsTaskbarVisible(false);
   releaseMainWindowFocus();
@@ -583,6 +583,7 @@ async function openPresentationFullscreen(prepared, command = {}) {
     await openPowerPointFullscreen(prepared.path);
     for (let attempt = 0; attempt < 8; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 250 : 350));
+      setWindowsTaskbarVisible(false);
       releaseMainWindowFocus();
       await focusPowerPointSlideShow();
     }
@@ -591,6 +592,7 @@ async function openPresentationFullscreen(prepared, command = {}) {
     await openPowerPointProcessFallback(prepared.path);
     for (let attempt = 0; attempt < 8; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 900 : 350));
+      setWindowsTaskbarVisible(false);
       releaseMainWindowFocus();
       await focusPowerPointSlideShow();
     }

@@ -38,7 +38,7 @@ export function createFirebaseRuntime(): FirebaseRuntime | null {
 const runtime = createFirebaseRuntime()
 const APP_STATE_COLLECTION = 'dek_app'
 const APP_STATE_DOC = 'state'
-const COMMANDS_COLLECTION = 'dek_commands'
+const STATION_COMMANDS_COLLECTION = 'station_commands'
 const PRESENTATIONS_COLLECTION = 'dek_presentations'
 const STATIONS_COLLECTION = 'dek_stations'
 const STUDENT_PAGES_COLLECTION = 'student_pages'
@@ -209,10 +209,7 @@ function mergeStateForSave(remote: AppState, local: AppState): AppState {
   }
   const keepPresentation = (item: { sessionId: string; studentId: string; uploadedAt?: string; updatedAt?: string; createdAt?: string }) => {
     if (!keepSession(item.sessionId) || !keepStudent(item.studentId)) return false
-    const clearedAt = clearedCommandsMap.get(item.sessionId)
-    if (!clearedAt) return true
-    const itemAt = Date.parse(item.uploadedAt || item.updatedAt || item.createdAt || '')
-    return Number.isFinite(itemAt) && itemAt >= clearedAt
+    return true
   }
 
   const newestActiveSession = newestIso(local.events[0]?.createdAt, remote.events[0]?.createdAt) === local.events[0]?.createdAt
@@ -248,6 +245,14 @@ function normalizeCommand(id: string, value: Record<string, unknown>): Command |
     zoomUrl: value.zoomUrl ? String(value.zoomUrl) : undefined,
     status: (value.status as Command['status']) || 'pending',
     error: value.error ? String(value.error) : value.errorMessage ? String(value.errorMessage) : undefined,
+    humanError: value.humanError ? String(value.humanError) : undefined,
+    attempt: value.attempt ? Number(value.attempt) : undefined,
+    maxAttempts: value.maxAttempts ? Number(value.maxAttempts) : undefined,
+    commandVersion: value.commandVersion ? Number(value.commandVersion) : undefined,
+    dedupeKey: value.dedupeKey ? String(value.dedupeKey) : undefined,
+    audience: value.audience as Command['audience'] || undefined,
+    expiresAt: value.expiresAt ? toIso(value.expiresAt) : undefined,
+    handledAt: value.handledAt ? toIso(value.handledAt) : undefined,
     createdAt: toIso(value.createdAt),
     updatedAt: toIso(value.updatedAt)
   }
@@ -482,16 +487,22 @@ export class FirebaseRepository implements AppRepository {
 
     const commandsToDelete = remoteState ? remoteState.commands.filter(c => !stateToSave.commands.find(s => s.id === c.id)) : []
     for (const command of commandsToDelete) {
-      getBatch().delete(doc(runtime.db, COMMANDS_COLLECTION, command.id))
+      const stationCommandId = command.targetStationId || 'station_local_demo'
+      getBatch().delete(doc(runtime.db, STATION_COMMANDS_COLLECTION, stationCommandId))
     }
 
     for (const command of stateToSave.commands) {
+      const stationCommandId = command.targetStationId || 'station_local_demo'
+      if (command.status !== 'pending' && command.status !== 'running' && command.status !== 'error') {
+        getBatch().delete(doc(runtime.db, STATION_COMMANDS_COLLECTION, stationCommandId))
+        continue
+      }
       const payload = withoutUndefined({ ...command, errorMessage: command.error })
       if (remoteState) {
         const remoteCmd = remoteState.commands.find(c => c.id === command.id)
         if (remoteCmd && JSON.stringify(withoutUndefined({ ...remoteCmd, errorMessage: remoteCmd.error })) === JSON.stringify(payload)) continue
       }
-      getBatch().set(doc(runtime.db, COMMANDS_COLLECTION, command.id), payload, { merge: true })
+      getBatch().set(doc(runtime.db, STATION_COMMANDS_COLLECTION, stationCommandId), payload, { merge: true })
     }
 
     const presentationsToDelete = remoteState ? remoteState.presentations.filter(c => !stateToSave.presentations.find(s => s.id === c.id)) : []
@@ -533,7 +544,9 @@ export class FirebaseRepository implements AppRepository {
 
     const queueKey = (item: Pick<QueueItem, 'sessionId' | 'studentId'>) => `${item.sessionId}:${item.studentId}`
     const queueByStudent = new Map(stateToSave.queue.map((item) => [queueKey(item), item]))
+    const queueByStudentId = new Map(stateToSave.queue.map((item) => [item.studentId, item]))
     const remoteQueueByStudent = new Map(remoteState?.queue.map((item) => [queueKey(item), item]) || [])
+    const remoteQueueByStudentId = new Map(remoteState?.queue.map((item) => [item.studentId, item]) || [])
     
     for (const student of stateToSave.students) {
       const token = student.token || student.id
@@ -543,13 +556,13 @@ export class FirebaseRepository implements AppRepository {
         }
         continue
       }
-      const page = buildPublicStudentPage(student, queueByStudent.get(`${student.sessionId}:${student.id}`))
+      const page = buildPublicStudentPage(student, queueByStudent.get(`${student.sessionId}:${student.id}`) || queueByStudentId.get(student.id))
       if (!page) continue
       const payload = withoutUndefined(page)
       if (remoteState) {
         const remoteStudent = remoteState.students.find(s => s.id === student.id)
         if (remoteStudent) {
-          const remotePage = buildPublicStudentPage(remoteStudent, remoteQueueByStudent.get(`${remoteStudent.sessionId}:${remoteStudent.id}`))
+          const remotePage = buildPublicStudentPage(remoteStudent, remoteQueueByStudent.get(`${remoteStudent.sessionId}:${remoteStudent.id}`) || remoteQueueByStudentId.get(remoteStudent.id))
           if (remotePage && JSON.stringify(withoutUndefined(remotePage)) === JSON.stringify(payload)) continue
         }
       }
@@ -585,7 +598,7 @@ export class FirebaseRepository implements AppRepository {
       }
     }
     const [commandsSnap, presentationsSnap, stationsSnap, studentsSnap, protocolsSnap] = await Promise.all([
-      safeGetDocs(COMMANDS_COLLECTION),
+      safeGetDocs(STATION_COMMANDS_COLLECTION),
       safeGetDocs(PRESENTATIONS_COLLECTION),
       safeGetDocs(STATIONS_COLLECTION),
       safeGetDocs('dek_students'),
@@ -621,7 +634,7 @@ export class FirebaseRepository implements AppRepository {
         if (snapshot.exists()) base = normalizeState(snapshot.data().state)
         emit()
       }, (error) => console.warn('Firestore state listener failed', error)),
-      onSnapshot(collection(runtime.db, COMMANDS_COLLECTION), (snapshot) => {
+      onSnapshot(collection(runtime.db, STATION_COMMANDS_COLLECTION), (snapshot) => {
         commands = snapshot.docs
           .map((snap) => normalizeCommand(snap.id, snap.data()))
           .filter(Boolean) as Command[]

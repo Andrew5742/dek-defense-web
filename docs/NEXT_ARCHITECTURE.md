@@ -16,7 +16,7 @@ Routes:
 - dek_registrations
 - dek_queue
 - dek_presentations
-- dek_commands
+- station_commands
 - dek_events
 - dek_protocols
 - dek_stations
@@ -31,7 +31,7 @@ Routes:
 - збереження версій презентацій;
 - LibreOffice conversion to PDF;
 - fullscreen PDF viewer;
-- слухає dek_commands у Firestore;
+- слухає station_commands у Firestore;
 - виконує open_presentation саме на пристрої доповідача.
 
 ## Обовʼязково перед реальною експлуатацією

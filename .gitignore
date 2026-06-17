@@ -8,6 +8,7 @@ dist/
 **/dist-final-no-password/
 _gh_pages_deploy/
 .firebase/
+firebase-backups/
 .env.local
 .env.production
 dek-defense-electron-agent/.env

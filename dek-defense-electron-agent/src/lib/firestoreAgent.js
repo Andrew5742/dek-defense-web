@@ -146,11 +146,13 @@ class FirestoreAgent {
     this.heartbeatTimer = null;
     this.inFlightCommandIds = new Set();
     this.handledCommandIds = new Set();
+    this.lastHandledCommandVersion = 0;
   }
 
   async start() {
     await this.updateStation({ online: true });
     this.heartbeatTimer = setInterval(() => this.updateStation({ online: true }).catch(() => {}), 120000);
+    this.cleanupLegacyCommands().catch((error) => this.sendToRenderer('agent-error', { error: error.message }));
     this.listenCommands();
   }
 
@@ -185,47 +187,18 @@ class FirestoreAgent {
   }
 
   listenCommands() {
-    const { collection, doc, query, where, onSnapshot } = this.firebase;
-    const targetedQuery = query(
-      collection(this.db, 'dek_commands'),
-      where('targetStationId', '==', this.stationId),
-      where('status', '==', 'pending')
-    );
-    const pendingQuery = query(
-      collection(this.db, 'dek_commands'),
-      where('status', '==', 'pending')
-    );
-
-    const handleSnapshot = (snapshot) => {
-      snapshot.docChanges().forEach((change) => {
-        if (change.type === 'added' || change.type === 'modified') {
-          const command = change.doc.data();
-          if (!this.shouldHandleCommand(command)) return;
-          this.handleCommand(change.doc.id, command).catch((error) => {
-            this.sendToRenderer('agent-error', { error: error.message });
-          });
-        }
-      });
-    };
-
+    const { doc, onSnapshot } = this.firebase;
     const handleError = (error) => this.sendToRenderer('agent-error', { error: error.message });
-
-    this.unsubscribers.push(onSnapshot(targetedQuery, handleSnapshot, handleError));
-    this.unsubscribers.push(onSnapshot(pendingQuery, handleSnapshot, handleError));
-
-    const stateRef = doc(this.db, APP_STATE_COLLECTION, APP_STATE_DOC);
-    const stateUnsub = onSnapshot(stateRef, (snapshot) => {
-      const commands = snapshot.exists() && Array.isArray(snapshot.data()?.state?.commands)
-        ? snapshot.data().state.commands
-        : [];
-      for (const command of commands) {
-        if (!command?.id || command.status !== 'pending' || !this.shouldHandleCommand(command)) continue;
-        this.handleCommand(command.id, command).catch((error) => {
-          this.sendToRenderer('agent-error', { error: error.message });
-        });
-      }
+    const commandRef = doc(this.db, 'station_commands', this.stationId);
+    const commandUnsub = onSnapshot(commandRef, (snapshot) => {
+      if (!snapshot.exists()) return;
+      const command = snapshot.data();
+      if (!this.shouldHandleCommand(command)) return;
+      this.handleCommand(command.id || snapshot.id, command).catch((error) => {
+        this.sendToRenderer('agent-error', { error: error.message });
+      });
     }, handleError);
-    this.unsubscribers.push(stateUnsub);
+    this.unsubscribers.push(commandUnsub);
   }
 
   shouldHandleCommand(command) {
@@ -234,19 +207,32 @@ class FirestoreAgent {
     if (this.inFlightCommandIds.has(commandId) || this.handledCommandIds.has(commandId)) return false;
     if (this.isStaleCommand(command)) return false;
     const target = command.targetStationId;
-    if (!target || target === this.stationId || target === 'station_local_demo') return true;
+    if (target && target !== this.stationId && target !== 'station_local_demo') return false;
+    const version = Number(command.commandVersion || 0);
+    if (version > 0 && version <= this.lastHandledCommandVersion) return false;
     return true;
   }
 
   async setCommandStatus(commandId, status, extra = {}) {
-    const { doc, getDoc, setDoc, serverTimestamp } = this.firebase;
+    const { deleteDoc, doc, getDoc, setDoc, serverTimestamp } = this.firebase;
     const patch = {
       status,
       updatedAt: serverTimestamp(),
       handledAt: status === 'done' || status === 'error' ? serverTimestamp() : null,
       ...extra
     };
-    await setDoc(doc(this.db, 'dek_commands', commandId), patch, { merge: true });
+    await setDoc(doc(this.db, 'station_commands', this.stationId), patch, { merge: true });
+    if (status === 'done' || status === 'expired' || status === 'cancelled') {
+      setTimeout(async () => {
+        try {
+          const ref = doc(this.db, 'station_commands', this.stationId);
+          const snapshot = await getDoc(ref);
+          if (snapshot.exists() && (snapshot.data()?.id || this.stationId) === commandId) {
+            await deleteDoc(ref);
+          }
+        } catch {}
+      }, 15000);
+    }
 
     const stateRef = doc(this.db, APP_STATE_COLLECTION, APP_STATE_DOC);
     const snapshot = await getDoc(stateRef);
@@ -271,12 +257,14 @@ class FirestoreAgent {
   async handleCommand(commandId, command) {
     if (this.inFlightCommandIds.has(commandId) || this.handledCommandIds.has(commandId)) return;
     this.inFlightCommandIds.add(commandId);
+    let shouldAdvanceCommandVersion = false;
 
     try {
       if (this.isStaleCommand(command)) {
-        await this.setCommandStatus(commandId, 'error', { errorMessage: 'Stale command ignored by local agent' });
+        await this.setCommandStatus(commandId, 'expired', { errorMessage: 'Stale command ignored by local agent', humanError: 'Команда застаріла. Натисніть дію ще раз.' });
         await this.addEvent('COMMAND_STALE_IGNORED', { commandId, commandType: command.type, sessionId: command.sessionId });
         this.handledCommandIds.add(commandId);
+        shouldAdvanceCommandVersion = true;
         return;
       }
 
@@ -289,6 +277,7 @@ class FirestoreAgent {
         await this.setCommandStatus(commandId, 'done');
         await this.addEvent('DISPLAY_STARTED', { sessionId: command.sessionId });
         this.handledCommandIds.add(commandId);
+        shouldAdvanceCommandVersion = true;
         return;
       }
 
@@ -299,6 +288,7 @@ class FirestoreAgent {
         await this.setCommandStatus(commandId, 'done');
         await this.addEvent('ZOOM_OPENED', { sessionId: command.sessionId, studentId: command.studentId || null });
         this.handledCommandIds.add(commandId);
+        shouldAdvanceCommandVersion = true;
         return;
       }
 
@@ -307,6 +297,18 @@ class FirestoreAgent {
         await this.setCommandStatus(commandId, 'done');
         await this.addEvent('UPLOAD_PAGE_OPENED', { sessionId: command.sessionId, studentId: command.studentId || null });
         this.handledCommandIds.add(commandId);
+        shouldAdvanceCommandVersion = true;
+        return;
+      }
+
+      if (command.type === 'close_day') {
+        await this.closePresentationFullscreen?.({ restoreDisplay: false });
+        await this.closeDisplayFullscreen?.({ restoreMain: true });
+        await this.cleanupSessionFiles(command.sessionId);
+        await this.setCommandStatus(commandId, 'done');
+        await this.addEvent('DAY_CLOSED_LOCAL_FILES_CLEANED', { sessionId: command.sessionId });
+        this.handledCommandIds.add(commandId);
+        shouldAdvanceCommandVersion = true;
         return;
       }
 
@@ -320,21 +322,60 @@ class FirestoreAgent {
         await this.setCommandStatus(commandId, 'done');
         await this.addEvent('PRESENTATION_OPENED', { sessionId: command.sessionId, studentId: command.studentId });
         this.handledCommandIds.add(commandId);
+        shouldAdvanceCommandVersion = true;
         return;
       }
 
       throw new Error(`Unknown command type: ${command.type}`);
     } catch (error) {
-      await this.setCommandStatus(commandId, 'error', { errorMessage: error.message });
+      const attempt = Number(command.attempt || 1);
+      const maxAttempts = Number(command.maxAttempts || 5);
+      const retryable = this.isRetryableCommandError(command, error);
+      if (retryable && attempt < maxAttempts) {
+        await this.setCommandStatus(commandId, 'pending', {
+          attempt: attempt + 1,
+          errorMessage: error.message,
+          humanError: this.humanizeCommandError(error)
+        });
+      } else {
+        await this.setCommandStatus(commandId, 'error', {
+          errorMessage: error.message,
+          humanError: this.humanizeCommandError(error),
+          attempt
+        });
+        this.handledCommandIds.add(commandId);
+        shouldAdvanceCommandVersion = true;
+      }
       await this.addEvent('COMMAND_ERROR', { commandId, commandType: command.type, errorMessage: error.message });
-      this.handledCommandIds.add(commandId);
       throw error;
     } finally {
+      const version = Number(command.commandVersion || 0);
+      if (shouldAdvanceCommandVersion && version > this.lastHandledCommandVersion) this.lastHandledCommandVersion = version;
       this.inFlightCommandIds.delete(commandId);
     }
   }
 
+  isRetryableCommandError(command, error) {
+    if (!command || command.type === 'open_upload_page') return false;
+    const message = String(error?.message || '');
+    if (/presentation.*not found|No presentation|Missing|PERMISSION_DENIED/i.test(message)) return false;
+    return command.type === 'open_presentation' || command.type === 'show_display' || command.type === 'start_defense_display';
+  }
+
+  humanizeCommandError(error) {
+    const message = String(error?.message || error || '');
+    if (/PERMISSION_DENIED|Missing or insufficient permissions/i.test(message)) return 'Firebase відхилив запис: перевірте правила Firestore або вхід агента.';
+    if (/Failed to fetch|network|offline|timeout/i.test(message)) return 'Проблема з мережею або Firebase. Перевірте інтернет на ПК захисту.';
+    if (/presentation.*not found|No presentation|Missing/i.test(message)) return 'Презентацію не знайдено на ПК захисту. Завантажте її через Agent.';
+    return message || 'Команда не виконалась. Спробуйте ще раз або перезапустіть Agent.';
+  }
+
   isStaleCommand(command) {
+    const expiresAt = command.expiresAt;
+    if (expiresAt) {
+      const expiresMs = expiresAt?.toDate ? expiresAt.toDate().getTime() : Date.parse(expiresAt);
+      if (Number.isFinite(expiresMs) && expiresMs <= Date.now()) return true;
+    }
     const createdAt = command.createdAt;
     let createdMs = 0;
     if (createdAt?.toDate) createdMs = createdAt.toDate().getTime();
@@ -342,6 +383,36 @@ class FirestoreAgent {
     else if (typeof createdAt === 'string') createdMs = Date.parse(createdAt);
     if (!Number.isFinite(createdMs) || createdMs <= 0) return false;
     return Date.now() - createdMs > 5 * 60 * 1000;
+  }
+
+  async cleanupLegacyCommands() {
+    const { collection, deleteDoc, doc, getDocs, query, where } = this.firebase;
+    const snapshots = await Promise.allSettled([
+      getDocs(query(collection(this.db, 'dek_commands'), where('targetStationId', '==', this.stationId))),
+      getDocs(query(collection(this.db, 'dek_commands'), where('targetStationId', '==', 'station_local_demo')))
+    ]);
+    const deletes = [];
+    const cutoff = Date.now() - 5 * 60 * 1000;
+    for (const result of snapshots) {
+      if (result.status !== 'fulfilled') continue;
+      result.value.docs.forEach((snap) => {
+        const data = snap.data();
+        const updatedAt = data.updatedAt?.toDate ? data.updatedAt.toDate().getTime() : Date.parse(data.updatedAt || data.createdAt || '');
+        const stale = Number.isFinite(updatedAt) && updatedAt < cutoff;
+        if (stale || data.status === 'done' || data.status === 'error' || data.status === 'expired' || data.status === 'cancelled') {
+          deletes.push(deleteDoc(doc(this.db, 'dek_commands', snap.id)).catch(() => undefined));
+        }
+      });
+    }
+    await Promise.all(deletes);
+  }
+
+  async cleanupSessionFiles(sessionId) {
+    if (!sessionId) return;
+    const { getSessionDir } = require('./paths');
+    const fs = require('fs');
+    const dir = getSessionDir(sessionId);
+    await fs.promises.rm(dir, { recursive: true, force: true });
   }
 
   async updatePresentation(sessionId, studentId, extra) {
@@ -363,6 +434,10 @@ class FirestoreAgent {
     const base = snapshot.exists() && snapshot.data()?.state
       ? { ...emptyAppState(), ...snapshot.data().state }
       : emptyAppState();
+    const session = base.sessions.find((item) => item.id === payload.sessionId);
+    if (session?.isClosed) {
+      throw new Error('День захисту закрито: завантаження презентацій заблоковано.');
+    }
     const now = nowIso();
     const presentationId = `${payload.sessionId}_${payload.studentId}`;
     const existingStudent = base.students.find((student) => student.id === payload.studentId);
@@ -439,13 +514,15 @@ class FirestoreAgent {
     const { deleteDoc, doc, setDoc } = this.firebase;
     const queueKey = (item) => `${item.sessionId}:${item.studentId}`;
     const queueByStudent = new Map((state.queue || []).map((item) => [queueKey(item), item]));
+    const queueByStudentId = new Map((state.queue || []).map((item) => [item.studentId, item]));
     const baseQueueByStudent = baseState ? new Map((baseState.queue || []).map((item) => [queueKey(item), item])) : new Map();
+    const baseQueueByStudentId = baseState ? new Map((baseState.queue || []).map((item) => [item.studentId, item])) : new Map();
     const basePages = new Map();
 
     if (baseState) {
       for (const student of baseState.students || []) {
         if (!isStudentPageExpired(student)) {
-          const p = buildPublicStudentPage(student, baseQueueByStudent.get(`${student.sessionId}:${student.id}`));
+          const p = buildPublicStudentPage(student, baseQueueByStudent.get(`${student.sessionId}:${student.id}`) || baseQueueByStudentId.get(student.id));
           if (p) basePages.set(student.id, JSON.stringify(withoutUndefined(p)));
         }
       }
@@ -460,7 +537,7 @@ class FirestoreAgent {
         }
         continue;
       }
-      const page = buildPublicStudentPage(student, queueByStudent.get(`${student.sessionId}:${student.id}`));
+      const page = buildPublicStudentPage(student, queueByStudent.get(`${student.sessionId}:${student.id}`) || queueByStudentId.get(student.id));
       if (!page) continue;
       
       const pageJson = JSON.stringify(withoutUndefined(page));

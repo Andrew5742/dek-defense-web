@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect, Fragment } from 'react'
 import type { AppState, DefenseSession, ImportReview, ProtocolRow, ProtocolSnapshot, Student } from '../shared/types'
 import { downloadTextFile, formatLocalDateTime, nowIso } from '../shared/utils'
-import { addManualStudent, addToQueue, confirmImportReview, createContinuationSession, createSession, removeFromQueue, removeSession, removeStudent, reorderQueue, reorderSession, setQueuePositionAbsolute, requestOpenPresentation, requestOpenUploadPage, requestOpenZoom, requestShowDisplay, requestStartDefenses, saveImportReview, saveProtocol, setDefenseStatus, setRegistrationLock, updateImportReview, updateSession, updateStudent, cancelRegistration } from '../services/actions'
+import { addManualStudent, addToQueue, closeDefenseDay, confirmImportReview, createContinuationSession, createSession, removeFromQueue, removeSession, removeStudent, reorderQueue, reorderSession, setQueuePositionAbsolute, requestOpenPresentation, requestOpenUploadPage, requestOpenZoom, requestShowDisplay, requestStartDefenses, saveImportReview, saveProtocol, setDefenseStatus, setRegistrationLock, unsetDefendedStatus, updateImportReview, updateSession, updateStudent, cancelRegistration } from '../services/actions'
 import { importDocx, importFromPastedText } from '../services/importService'
 import { isFirebaseEnabled } from '../services/firebaseAdapter'
 import { buildStudentTemporaryUrl, formatStudentTemporaryPath } from '../services/publicUrl'
@@ -185,7 +185,7 @@ function Overview({ state, setState, activeSession, setActiveSessionId }: Props)
             setActiveSessionId(next.sessions[0].id)
           }}>Створити</button>
           {activeSession && <button onClick={() => {
-            const remaining = state.students.filter((student) => student.sessionId === activeSession.id && student.defenseStatus !== 'defended').length
+            const remaining = state.students.filter((student) => student.sessionId === activeSession.id && student.defenseStatus !== 'defended' && student.defenseStatus !== 'problem' && student.defenseStatus !== 'absent').length
             if (!remaining) {
               alert('У цій даті немає студентів для перенесення: усі вже мають статус "захистився".')
               return
@@ -208,12 +208,12 @@ function Overview({ state, setState, activeSession, setActiveSessionId }: Props)
                 setState({ ...state, activeSessionId: s.id })
               }}>Обрати</button>
               <button onClick={() => beginEditSession(s)}>Редагувати</button>
-              <button className="danger" onClick={() => {
+              <button className="danger" disabled={s.isClosed === true} onClick={() => {
                 if (!confirm(`Видалити сесію захисту?\n\n${s.title} · ${s.date}\n\nРазом із нею буде видалено студентів, чергу, презентації, команди та протоколи цієї сесії.`)) return
                 const next = removeSession(state, s.id)
                 setState(next)
                 setActiveSessionId(next.activeSessionId || next.sessions[0]?.id || '')
-              }}>Видалити</button>
+              }}>{s.isClosed ? 'День закрито' : 'Видалити'}</button>
             </td>
           </tr>)}</tbody>
         </table>
@@ -391,8 +391,9 @@ function QueuePanel({ state, setState, session, onEdit }: { state: AppState; set
   const queue = state.queue.filter((q) => q.sessionId === session.id).sort((a, b) => a.position - b.position)
   const students = state.students.filter((s) => s.sessionId === session.id)
   const byId = new Map(students.map((s) => [s.id, s]))
-  const notQueued = students.filter((s) => !queue.some((q) => q.studentId === s.id))
+  const notQueued = students.filter((s) => !queue.some((q) => q.studentId === s.id) && s.defenseStatus !== 'defended' && s.defenseStatus !== 'problem' && s.defenseStatus !== 'absent')
   const defended = students.filter((s) => s.defenseStatus === 'defended')
+  const dayClosed = session.isClosed === true
 
   function patchProtocolFields(student: Student, patch: Partial<Student>) {
     setState(updateStudent(state, student.id, patch))
@@ -400,13 +401,19 @@ function QueuePanel({ state, setState, session, onEdit }: { state: AppState; set
 
   return <div>
     <h1>Черга захисту</h1>
+    {dayClosed && <div className="ok-box">День захисту закрито. Порядок черги, видалення та завантаження презентацій заблоковані; проблемні записи можна редагувати.</div>}
     <div className="toolbar sticky-toolbar">
-      <button onClick={() => setState(setRegistrationLock(state, session.id, true, false))}>Закрити запис</button>
-      <button onClick={() => setState(setRegistrationLock(state, session.id, false, true))}>Ручне розблокування</button>
+      <button disabled={dayClosed} onClick={() => setState(setRegistrationLock(state, session.id, true, false))}>Закрити запис</button>
+      <button disabled={dayClosed} onClick={() => setState(setRegistrationLock(state, session.id, false, true))}>Ручне розблокування</button>
       <button className="primary" onClick={() => setState(requestStartDefenses(state, session.id))}>Почати захисти</button>
       <button onClick={() => setState(requestShowDisplay(state, session.id))}>Display fullscreen</button>
       <button onClick={() => setState(requestOpenZoom(state, session.id))}>Відкрити Zoom meeting</button>
       <button onClick={() => printStudentsReport(`Захистилися ${session.date}`, defended, { includeNotes: true })}>PDF захистилися за день</button>
+      <button className="danger" disabled={dayClosed || !queue.length} onClick={() => {
+        if (confirm(`Закрити день захисту?\n\n${session.title} · ${session.date}\n\nПісля цього порядок черги, видалення з черги, анулювання записів і завантаження презентацій буде заблоковано. Локальні презентації на ПК захисту буде очищено командою Agent.`)) {
+          setState(closeDefenseDay(state, session.id))
+        }
+      }}>Закрити день</button>
       <button onClick={() => downloadTextFile(`backup_${session.date}.json`, JSON.stringify(state, null, 2))}>Експорт backup</button>
     </div>
     <div className="panel" style={{ border: '1px solid #334155', background: '#0f172a', padding: 16, marginBottom: 16 }}>
@@ -478,7 +485,7 @@ function QueuePanel({ state, setState, session, onEdit }: { state: AppState; set
               <tr className={rowClass} style={rowStyle}>
                 <td style={{ textAlign: 'center' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-                  <button onClick={() => setState(reorderQueue(state, session.id, s.id, -1))} disabled={q.position <= 1} style={{ padding: '0 4px', fontSize: 10 }}>▲</button>
+                  <button onClick={() => setState(reorderQueue(state, session.id, s.id, -1))} disabled={dayClosed || q.position <= 1} style={{ padding: '0 4px', fontSize: 10 }}>▲</button>
                   <input
                     type="number"
                     min={1}
@@ -490,9 +497,10 @@ function QueuePanel({ state, setState, session, onEdit }: { state: AppState; set
                         setState(setQueuePositionAbsolute(state, session.id, s.id, newPos));
                       }
                     }}
+                    disabled={dayClosed}
                     style={{ width: 44, textAlign: 'center', padding: '2px 0', border: '1px solid #475569', background: '#1e293b', color: 'white', WebkitAppearance: 'none', margin: 0 }}
                   />
-                  <button onClick={() => setState(reorderQueue(state, session.id, s.id, 1))} disabled={q.position >= queue.length} style={{ padding: '0 4px', fontSize: 10 }}>▼</button>
+                  <button onClick={() => setState(reorderQueue(state, session.id, s.id, 1))} disabled={dayClosed || q.position >= queue.length} style={{ padding: '0 4px', fontSize: 10 }}>▼</button>
                 </div>
               </td>
               <td>
@@ -500,8 +508,8 @@ function QueuePanel({ state, setState, session, onEdit }: { state: AppState; set
                 {s.defenseStatus === 'problem' && <ProblemEditor student={s} state={state} setState={setState} />}
               </td>
               <td><StatusBadge value={s.defenseFormat || 'offline'} /></td>
-              <td><StatusBadge value={s.presentationStatus} /></td>
-              <td><span style={{ color: s.registrationConfirmed ? '#059669' : hasPresentation ? '#d97706' : '#94a3b8', fontWeight: 'bold' }}>{qrStatus}</span></td>
+              <td>{dayClosed ? <StatusBadge value="defended" /> : <StatusBadge value={s.presentationStatus} />}</td>
+              <td><span style={{ color: dayClosed || s.registrationConfirmed ? '#059669' : hasPresentation ? '#d97706' : '#94a3b8', fontWeight: 'bold' }}>{dayClosed ? 'Захищено' : qrStatus}</span></td>
               <td><StatusBadge value={s.defenseStatus} /></td>
               <td className="actions">
                 <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
@@ -513,7 +521,7 @@ function QueuePanel({ state, setState, session, onEdit }: { state: AppState; set
                   }}>Скопіювати лінк</button>
                 </div>
                 <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
-                  <button onClick={() => setState(requestOpenUploadPage(state, session.id, s.id))}>Завантажити презентацію (Agent)</button>
+                  <button disabled={dayClosed} onClick={() => setState(requestOpenUploadPage(state, session.id, s.id))}>Завантажити презентацію (Agent)</button>
                 </div>
                 <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
                   <button onClick={() => setState(requestOpenPresentation(state, session.id, s.id))}>Відкрити презентацію</button>
@@ -522,13 +530,14 @@ function QueuePanel({ state, setState, session, onEdit }: { state: AppState; set
                 <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
                   <button onClick={() => setState(setDefenseStatus(state, s.id, 'presenting'))}>Захищається</button>
                   <button onClick={() => setState(setDefenseStatus(state, s.id, 'defended'))}>Захистився</button>
+                  {s.defenseStatus === 'defended' && <button onClick={() => setState(unsetDefendedStatus(state, s.id))}>Зняти захистився</button>}
                   <button onClick={() => setState(setDefenseStatus(state, s.id, 'problem'))}>Проблема</button>
                   <button onClick={() => setState(setDefenseStatus(state, s.id, 'absent'))}>Відсутній</button>
                 </div>
                 <div style={{ display: 'flex', gap: 6 }}>
                   <button onClick={() => onEdit(s)}>Ред.</button>
-                  <button onClick={() => { if (confirm('Анулювати запис студента (презентація і черга будуть очищені)?')) setState(cancelRegistration(state, session.id, s.id)) }} className="danger">Анулювати запис</button>
-                  <button onClick={() => setState(removeFromQueue(state, session.id, s.id))} className="danger">З черги</button>
+                  <button disabled={dayClosed} onClick={() => { if (confirm('Анулювати запис студента (презентація і черга будуть очищені)?')) setState(cancelRegistration(state, session.id, s.id)) }} className="danger">Анулювати запис</button>
+                  <button disabled={dayClosed} onClick={() => setState(removeFromQueue(state, session.id, s.id))} className="danger">З черги</button>
                 </div>
               </td>
             </tr>
@@ -594,7 +603,7 @@ function QueuePanel({ state, setState, session, onEdit }: { state: AppState; set
       {notQueued.map((s) => <div className="list-row" key={s.id}>
         <span>{s.fullName} · {s.groupName} <StatusBadge value={s.defenseStatus} /></span>
         <div className="actions compact-actions">
-          <button onClick={() => setState(addToQueue(state, s.id, 'admin'))}>Додати вручну</button>
+          <button disabled={dayClosed} onClick={() => setState(addToQueue(state, s.id, 'admin'))}>Додати вручну</button>
           <button className="danger" onClick={() => {
             if (confirm(`Видалити студента з системи?\n\n${s.fullName}\n\nБуде прибрано з черги, протоколів і статусів презентації.`)) setState(removeStudent(state, s.id))
           }}>Видалити</button>
@@ -811,12 +820,15 @@ function DiagnosticsPanel({ state, activeSession }: { state: AppState; activeSes
       <li>Upload URL Agent: {onlineStations.length ? onlineStations.map((s) => s.lanUploadUrl || s.localUploadUrl || 'без upload URL').join(', ') : '-'}</li>
       <li>Команди агента pending: {pendingCommands}</li>
       <li>Команди з помилкою: {failedCommands}</li>
+      {state.commands.filter((c) => c.status === 'error').slice(0, 3).map((command) => (
+        <li key={command.id}>Остання помилка команди: {command.humanError || command.error || command.type}</li>
+      ))}
       <li>
         Об'єм стану (KB):
         {Object.keys(state).map(k => `${k}: ${Math.round(JSON.stringify(state[k as keyof typeof state]).length / 1024)}`).join(', ')}
       </li>
     </ul>
-    {!onlineStations.length && <p className="hint">Якщо презентації мають відкриватися на ПК захисту, запустіть Electron Agent на цьому ПК і перевірте Firestore rules для dek_stations/dek_commands.</p>}
+    {!onlineStations.length && <p className="hint">Якщо презентації мають відкриватися на ПК захисту, запустіть Electron Agent на цьому ПК і перевірте Firestore rules для dek_stations/station_commands.</p>}
   </div></div>
 }
 

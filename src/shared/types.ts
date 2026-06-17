@@ -74,6 +74,9 @@ export interface DefenseSession {
   stationId?: string
   mobileDisplaySettings?: MobileDisplaySettings
   sortOrder?: number
+  isClosed?: boolean
+  closedAt?: string
+  closedQueueStudentIds?: string[]
   createdAt: string
   updatedAt: string
 }
@@ -122,6 +125,8 @@ export interface Student {
   token?: string
   registrationConfirmed?: boolean
   mobilePageExpiresAt?: string
+  defendedAt?: string
+  defendedSessionId?: string
   problemDetails?: {
     note: string
     returnedToStudent: boolean
@@ -162,13 +167,21 @@ export interface QueueItem {
 export interface Command {
   id: string
   sessionId: string
-  type: 'open_presentation' | 'close_presentation' | 'set_current_student' | 'start_defense_display' | 'show_display' | 'open_zoom' | 'open_upload_page'
+  type: 'open_presentation' | 'close_presentation' | 'set_current_student' | 'start_defense_display' | 'show_display' | 'open_zoom' | 'open_upload_page' | 'close_day'
   studentId?: string
   studentName?: string
   targetStationId?: string
   zoomUrl?: string
-  status: 'pending' | 'running' | 'done' | 'error'
+  status: 'pending' | 'running' | 'done' | 'error' | 'expired' | 'cancelled'
   error?: string
+  humanError?: string
+  attempt?: number
+  maxAttempts?: number
+  commandVersion?: number
+  dedupeKey?: string
+  audience?: 'agent' | 'student' | 'both'
+  expiresAt?: string
+  handledAt?: string
   createdAt: string
   updatedAt: string
 }

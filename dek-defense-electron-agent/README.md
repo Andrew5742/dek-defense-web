@@ -38,7 +38,7 @@ chmod +x setup-mac.sh
 Agent очікує такі колекції:
 
 - `dek_stations`
-- `dek_commands`
+- `station_commands`
 - `dek_presentations`
 - `dek_events`
 

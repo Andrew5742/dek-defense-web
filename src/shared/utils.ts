@@ -62,7 +62,8 @@ export function formatLocalDateTime(iso?: string): string {
   return new Date(iso).toLocaleString('uk-UA')
 }
 
-export function canRegister(session: { date: string; registrationOpenFrom: string; registrationOpenTo: string; manualRegistrationOpen: boolean; isRegistrationLocked: boolean }) {
+export function canRegister(session: { date: string; registrationOpenFrom: string; registrationOpenTo: string; manualRegistrationOpen: boolean; isRegistrationLocked: boolean; isClosed?: boolean }) {
+  if (session.isClosed) return false
   if (session.manualRegistrationOpen) return true
   if (session.isRegistrationLocked) return false
   return true

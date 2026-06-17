@@ -29,6 +29,9 @@ service cloud.firestore {
     match /dek_commands/{commandId} {
       allow read, write: if true;
     }
+    match /station_commands/{stationId} {
+      allow read, write: if true;
+    }
     match /dek_stations/{stationId} {
       allow read, write: if true;
     }

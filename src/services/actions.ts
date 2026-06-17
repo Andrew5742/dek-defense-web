@@ -56,6 +56,14 @@ function targetStationId(state: AppState, session?: DefenseSession): string {
   return newestStation?.id || 'station_local_demo'
 }
 
+function isSessionClosed(state: AppState, sessionId: string): boolean {
+  return state.sessions.find((session) => session.id === sessionId)?.isClosed === true
+}
+
+function isFinalDefenseStatus(status: DefenseStatus): boolean {
+  return status === 'defended' || status === 'problem' || status === 'absent'
+}
+
 export function getOnlineUploadUrl(state: AppState): string | undefined {
   const station = state.stations.find((item) => item.online && (item.lanUploadUrl || item.localUploadUrl)) || state.stations.find((item) => item.lanUploadUrl || item.localUploadUrl)
   return (station?.lanUploadUrl || station?.localUploadUrl)?.replace(/\/+$/, '')
@@ -126,7 +134,7 @@ export function createContinuationSession(state: AppState, sourceSessionId: stri
   const sourceSession = state.sessions.find((session) => session.id === sourceSessionId)
   if (!sourceSession) return state
   const now = nowIso()
-  const remainingStudents = state.students.filter((student) => student.sessionId === sourceSessionId && student.defenseStatus !== 'defended')
+  const remainingStudents = state.students.filter((student) => student.sessionId === sourceSessionId && !isFinalDefenseStatus(student.defenseStatus))
   const groupNames = Array.from(new Set(remainingStudents.map((student) => student.groupName).filter(Boolean)))
   const session: DefenseSession = {
     id: uid('session'),
@@ -162,11 +170,12 @@ export function createContinuationSession(state: AppState, sourceSessionId: stri
     groups.push(group)
   }
 
-  const students: Student[] = remainingStudents.map((student) => {
+  const movedStudentIds = new Set(remainingStudents.map((student) => student.id))
+  const students: Student[] = state.students.map((student) => {
+    if (!movedStudentIds.has(student.id)) return student
     const group = groupMap.get(student.groupName)
     return {
       ...student,
-      id: uid('student'),
       token: uid('token'),
       registrationConfirmed: false,
       sessionId: session.id,
@@ -178,10 +187,6 @@ export function createContinuationSession(state: AppState, sourceSessionId: stri
       queuePosition: undefined,
       wantsZoomDemo: false,
       hasVideo: false,
-      notes: student.defenseStatus === 'problem'
-        ? [student.notes, `Перенесено з ${sourceSession.date} після проблемного захисту`].filter(Boolean).join('\n')
-        : student.notes,
-      createdAt: now,
       updatedAt: now
     }
   })
@@ -191,13 +196,15 @@ export function createContinuationSession(state: AppState, sourceSessionId: stri
     activeSessionId: session.id,
     sessions: [session, ...state.sessions],
     groups,
-    students: [...state.students, ...students]
+    students,
+    queue: state.queue.filter((item) => item.sessionId !== sourceSessionId || !movedStudentIds.has(item.studentId)),
+    presentations: state.presentations.filter((item) => !movedStudentIds.has(item.studentId))
   }, {
     sessionId: session.id,
     type: 'SESSION_CREATED',
     actor: 'admin',
-    message: `Створено наступну сесію з незахищених: ${students.length} студентів`,
-    payload: { sourceSessionId, sessionId: session.id, count: students.length }
+    message: `Створено наступну сесію з незахищених: ${remainingStudents.length} студентів`,
+    payload: { sourceSessionId, sessionId: session.id, count: remainingStudents.length }
   })
 }
 
@@ -254,30 +261,67 @@ export function reorderSession(state: AppState, sessionId: string, direction: -1
   })
 }
 
-function requestCommand(state: AppState, command: Command, event: Omit<EventLogItem, 'id' | 'createdAt'>): AppState {
-  const commandFreshUntilMs = 2 * 60 * 1000
+function activeCommandStatuses(status: Command['status']) {
+  return status === 'pending' || status === 'running'
+}
+
+function commandDedupeKey(command: Command): string {
+  return [
+    command.targetStationId || 'station_local_demo',
+    command.type,
+    command.sessionId,
+    command.studentId || '',
+    command.zoomUrl || ''
+  ].join('|')
+}
+
+function commandExpiresAt(fromIso = nowIso()) {
+  const base = Date.parse(fromIso)
+  return new Date((Number.isFinite(base) ? base : Date.now()) + 2 * 60 * 1000).toISOString()
+}
+
+function nextCommandVersion(state: AppState, stationId?: string) {
+  const stationCommands = state.commands.filter((command) => (command.targetStationId || 'station_local_demo') === (stationId || 'station_local_demo'))
+  return Math.max(Date.now(), Math.max(0, ...stationCommands.map((command) => command.commandVersion || 0)) + 1)
+}
+
+function pruneCommands(commands: Command[], nextCommand?: Command): Command[] {
   const now = Date.now()
-  const existing = state.commands.find((item) =>
-    item.sessionId === command.sessionId &&
-    item.type === command.type &&
-    item.status !== 'done' &&
-    item.status !== 'error' &&
-    (item.studentId || '') === (command.studentId || '') &&
-    (item.targetStationId || '') === (command.targetStationId || '') &&
-    now - Date.parse(item.createdAt) < commandFreshUntilMs
-  )
-  if (existing) {
-    return addEvent(state, {
-      ...event,
-      message: `${event.message} (команда вже очікує виконання)`,
-      payload: { ...(event.payload || {}), commandId: existing.id, reused: true }
-    })
-  }
-  return addEvent({ ...state, commands: [command, ...state.commands] }, event)
+  const keepRecentMs = 5 * 60 * 1000
+  const nextStation = nextCommand?.targetStationId || ''
+  const nextKey = nextCommand?.dedupeKey || ''
+  const filtered = commands.filter((command) => {
+    if (nextCommand && (command.targetStationId || '') === nextStation && activeCommandStatuses(command.status)) return false
+    if (nextCommand && command.dedupeKey && command.dedupeKey === nextKey) return false
+    if (command.status === 'done' || command.status === 'cancelled' || command.status === 'expired') {
+      return now - Date.parse(command.updatedAt || command.createdAt) < keepRecentMs
+    }
+    if (command.status === 'error') {
+      return now - Date.parse(command.updatedAt || command.createdAt) < keepRecentMs
+    }
+    return true
+  })
+  return (nextCommand ? [nextCommand, ...filtered] : filtered).slice(0, 20)
 }
 
 function requestFreshCommand(state: AppState, command: Command, event: Omit<EventLogItem, 'id' | 'createdAt'>): AppState {
-  return addEvent({ ...state, commands: [command, ...state.commands] }, event)
+  const createdAt = command.createdAt || nowIso()
+  const prepared: Command = {
+    ...command,
+    status: 'pending',
+    audience: command.audience || 'agent',
+    attempt: 1,
+    maxAttempts: command.maxAttempts || 5,
+    commandVersion: nextCommandVersion(state, command.targetStationId),
+    dedupeKey: command.dedupeKey || commandDedupeKey(command),
+    expiresAt: command.expiresAt || commandExpiresAt(createdAt),
+    createdAt,
+    updatedAt: createdAt
+  }
+  return addEvent({ ...state, commands: pruneCommands(state.commands, prepared) }, {
+    ...event,
+    payload: { ...(event.payload || {}), commandId: prepared.id, commandVersion: prepared.commandVersion }
+  })
 }
 
 function importDraftKey(value: { fullName: string; groupName?: string }) {
@@ -511,6 +555,15 @@ export function setRegistrationLock(state: AppState, sessionId: string, locked: 
 export function addToQueue(state: AppState, studentId: string, actor: 'admin' | 'student' = 'admin'): AppState {
   const student = state.students.find((s) => s.id === studentId)
   if (!student) return state
+  if (isSessionClosed(state, student.sessionId)) {
+    return addEvent(state, {
+      sessionId: student.sessionId,
+      type: 'STUDENT_REGISTERED',
+      actor,
+      message: 'День захисту закрито: додавання в чергу заблоковано',
+      payload: { studentId, blocked: true }
+    })
+  }
   const existing = state.queue.find((q) => q.studentId === studentId)
   let next = state
   let queuePosition = existing?.position
@@ -538,6 +591,7 @@ export function addToQueue(state: AppState, studentId: string, actor: 'admin' | 
 }
 
 export function reorderQueue(state: AppState, sessionId: string, studentId: string, direction: -1 | 1): AppState {
+  if (isSessionClosed(state, sessionId)) return state
   const queue = state.queue.filter((q) => q.sessionId === sessionId).sort((a, b) => a.position - b.position)
   const idx = queue.findIndex((q) => q.studentId === studentId)
   const swapIdx = idx + direction
@@ -559,6 +613,7 @@ export function reorderQueue(state: AppState, sessionId: string, studentId: stri
 }
 
 export function setQueuePositionAbsolute(state: AppState, sessionId: string, studentId: string, targetPosition: number): AppState {
+  if (isSessionClosed(state, sessionId)) return state
   const sessionQueue = state.queue.filter((q) => q.sessionId === sessionId).sort((a, b) => a.position - b.position)
   const idx = sessionQueue.findIndex((q) => q.studentId === studentId)
   if (idx < 0) return state
@@ -589,6 +644,7 @@ export function setQueuePositionAbsolute(state: AppState, sessionId: string, stu
 }
 
 export function makeNextInQueue(state: AppState, sessionId: string, studentId: string): AppState {
+  if (isSessionClosed(state, sessionId)) return state
   const sessionQueue = state.queue.filter((q) => q.sessionId === sessionId).sort((a, b) => a.position - b.position)
   const idx = sessionQueue.findIndex((q) => q.studentId === studentId)
   if (idx <= 0) return state
@@ -617,6 +673,7 @@ export function makeNextInQueue(state: AppState, sessionId: string, studentId: s
 }
 
 export function removeFromQueue(state: AppState, sessionId: string, studentId: string): AppState {
+  if (isSessionClosed(state, sessionId)) return state
   // Keep all queue items EXCEPT the one for this student in this session
   const otherSessions = state.queue.filter((q) => q.sessionId !== sessionId)
   const sessionQueue = state.queue
@@ -634,6 +691,7 @@ export function removeFromQueue(state: AppState, sessionId: string, studentId: s
 }
 
 export function cancelRegistration(state: AppState, sessionId: string, studentId: string): AppState {
+  if (isSessionClosed(state, sessionId)) return state
   const updatedStudents = state.students.map((s) =>
     s.id === studentId
       ? {
@@ -674,6 +732,15 @@ export function cancelRegistration(state: AppState, sessionId: string, studentId
 export async function uploadPresentation(state: AppState, studentId: string, file: File, actor: 'student' | 'admin' = 'student'): Promise<AppState> {
   const student = state.students.find((s) => s.id === studentId)
   if (!student) return state
+  if (isSessionClosed(state, student.sessionId)) {
+    return addEvent(state, {
+      sessionId: student.sessionId,
+      type: 'PRESENTATION_UPLOADED',
+      actor,
+      message: 'День захисту закрито: завантаження презентацій заблоковано',
+      payload: { studentId, blocked: true }
+    })
+  }
   const ext = extOf(file.name)
   if (!isAllowedPresentationExt(ext)) {
     return updateStudent(state, studentId, { presentationStatus: 'error', notes: `${student.notes || ''}\nНедозволений формат презентації: ${ext}` }, actor)
@@ -892,17 +959,15 @@ export function requestStartDefenses(state: AppState, sessionId: string): AppSta
 
 export function clearOldCommands(state: AppState, sessionId: string): AppState {
   const remainingCommands = state.commands.filter((c) => c.sessionId !== sessionId)
-  const remainingPresentations = state.presentations.filter((p) => p.sessionId !== sessionId)
   
   return addEvent({ 
     ...state, 
-    commands: remainingCommands,
-    presentations: remainingPresentations
+    commands: remainingCommands
   }, {
     sessionId,
     type: 'OLD_COMMANDS_CLEARED',
     actor: 'admin',
-    message: 'Очищено історію команд та локальні відомості про презентації',
+    message: 'Очищено історію команд',
     payload: { sessionId }
   })
 }
@@ -1045,9 +1110,12 @@ export async function openLatestPresentation(state: AppState, studentId: string)
 export function setDefenseStatus(state: AppState, studentId: string, defenseStatus: DefenseStatus): AppState {
   const student = state.students.find((s) => s.id === studentId)
   if (!student) return state
+  const defendedPatch = defenseStatus === 'defended'
+    ? { defendedAt: nowIso(), defendedSessionId: student.sessionId }
+    : {}
   let next = addEvent({
     ...state,
-    students: state.students.map((s) => s.id === studentId ? applyStudentPatch(s, { defenseStatus }) : s)
+    students: state.students.map((s) => s.id === studentId ? applyStudentPatch(s, { defenseStatus, ...defendedPatch }) : s)
   }, {
     sessionId: student.sessionId,
     type: 'DEFENSE_STATUS_CHANGED',
@@ -1067,6 +1135,93 @@ export function setDefenseStatus(state: AppState, studentId: string, defenseStat
     }
   }
   return next
+}
+
+export function unsetDefendedStatus(state: AppState, studentId: string): AppState {
+  const student = state.students.find((s) => s.id === studentId)
+  if (!student || student.defenseStatus !== 'defended') return state
+  return addEvent({
+    ...state,
+    students: state.students.map((s) => s.id === studentId
+      ? applyStudentPatch(s, {
+          defenseStatus: 'waiting',
+          defendedAt: undefined,
+          defendedSessionId: undefined,
+          mobilePageExpiresAt: undefined
+        })
+      : s)
+  }, {
+    sessionId: student.sessionId,
+    type: 'DEFENSE_STATUS_CHANGED',
+    actor: 'admin',
+    message: `Знято статус "захистився": ${student.fullName}`,
+    payload: { studentId, defenseStatus: 'waiting' }
+  })
+}
+
+export function closeDefenseDay(state: AppState, sessionId: string): AppState {
+  const session = state.sessions.find((item) => item.id === sessionId)
+  if (!session || session.isClosed) return state
+  const closedAt = nowIso()
+  const queue = state.queue
+    .filter((item) => item.sessionId === sessionId)
+    .sort((a, b) => a.position - b.position)
+  const queuedStudentIds = queue.map((item) => item.studentId)
+  const queuedSet = new Set(queuedStudentIds)
+  const command: Command = {
+    id: uid('cmd'),
+    sessionId,
+    type: 'close_day',
+    targetStationId: targetStationId(state, session),
+    status: 'pending',
+    createdAt: closedAt,
+    updatedAt: closedAt
+  }
+  const next: AppState = {
+    ...state,
+    sessions: state.sessions.map((item) => item.id === sessionId
+      ? {
+          ...item,
+          isClosed: true,
+          isRegistrationLocked: true,
+          manualRegistrationOpen: false,
+          closedAt,
+          closedQueueStudentIds: queuedStudentIds,
+          updatedAt: closedAt
+        }
+      : item),
+    students: state.students.map((student) => {
+      if (!queuedSet.has(student.id)) return student
+      if (student.defenseStatus === 'defended' || student.defenseStatus === 'problem' || student.defenseStatus === 'absent') {
+        return applyStudentPatch(student, {
+          registrationStatus: student.registrationStatus === 'not_registered' ? 'manually_added' : student.registrationStatus,
+          mobilePageExpiresAt: student.mobilePageExpiresAt || mobilePageExpiresAt(closedAt),
+          defendedSessionId: student.defendedSessionId || sessionId,
+          defendedAt: student.defendedAt || closedAt
+        })
+      }
+      return applyStudentPatch(student, {
+        registrationStatus: student.registrationStatus === 'not_registered' ? 'manually_added' : student.registrationStatus,
+        defenseStatus: 'defended',
+        mobilePageExpiresAt: mobilePageExpiresAt(closedAt),
+        defendedSessionId: sessionId,
+        defendedAt: closedAt
+      })
+    })
+  }
+  return requestFreshCommand(addEvent(next, {
+    sessionId,
+    type: 'SESSION_UPDATED',
+    actor: 'admin',
+    message: `Закрито день захисту: ${session.title} · ${session.date}`,
+    payload: { sessionId, count: queuedStudentIds.length }
+  }), command, {
+    sessionId,
+    type: 'SESSION_UPDATED',
+    actor: 'admin',
+    message: 'Створено команду очищення локальних презентацій після закриття дня',
+    payload: { sessionId }
+  })
 }
 
 export function saveProtocol(state: AppState, protocol: ProtocolSnapshot): AppState {

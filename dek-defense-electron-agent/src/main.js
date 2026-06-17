@@ -147,10 +147,20 @@ function openDisplayFullscreen(command = {}) {
 }
 
 function closeDisplayFullscreen() {
-  if (displayWindow && !displayWindow.isDestroyed()) {
-    displayWindow.close();
+  if (!displayWindow || displayWindow.isDestroyed()) {
+    displayWindowReadyPromise = null;
+    displayWindow = undefined;
+    return Promise.resolve();
   }
-  displayWindowReadyPromise = null;
+  const windowToClose = displayWindow;
+  return new Promise((resolve) => {
+    windowToClose.once('closed', resolve);
+    windowToClose.close();
+    setTimeout(resolve, 1000);
+  }).finally(() => {
+    displayWindowReadyPromise = null;
+    if (displayWindow === windowToClose) displayWindow = undefined;
+  });
 }
 
 function bringDisplayToFront() {
@@ -441,12 +451,11 @@ if ($slideShow -ne $null) {
 }
 
 async function openPresentationFullscreen(prepared, command = {}) {
-  // Close any existing presentation (PDF viewer) but NEVER close the display window
+  // A presentation owns the projector screen. Close Display instead of trying
+  // to keep it behind the slideshow, which is unreliable with PowerPoint focus.
   await closePresentationFullscreen({ restoreDisplay: false });
-  // Lower display below presentation level (don't close it)
-  releaseDisplayFocus();
+  await closeDisplayFullscreen();
   if (prepared.kind === 'pdf') {
-    if (displayWindow && !displayWindow.isDestroyed()) displayWindow.setFocusable(true);
     openPdfFullscreen(prepared.path, command);
     return;
   }

@@ -67,6 +67,7 @@ export interface PublicMobileDisplay {
   enabled: boolean
   publicMessage: string
   zoomUrl: string
+  queuePositions?: Record<string, number>
   currentlyDefending: Array<{ studentId: string; fullName: string; groupName: string; position: number }>
   nextDefending: Array<{ studentId: string; fullName: string; groupName: string; position: number }>
   updatedAt: string
@@ -381,6 +382,11 @@ function buildPublicMobileDisplay(state: AppState, session: DefenseSession): Pub
     publicMessage: ''
   }
   const queue = publicQueueItems(state, session)
+  const queuePositions = Object.fromEntries(
+    queue
+      .map((item) => [item.student.id, Number(item.queue.position) || 0] as const)
+      .filter(([, position]) => position > 0)
+  )
   const toPublic = (item: { queue: QueueItem; student: Student }) => ({
     studentId: item.student.id,
     fullName: item.student.fullName,
@@ -392,6 +398,7 @@ function buildPublicMobileDisplay(state: AppState, session: DefenseSession): Pub
     enabled: settings.enabled !== false && session.isRegistrationLocked === true,
     publicMessage: settings.publicMessage || '',
     zoomUrl: session.zoomUrl || '',
+    queuePositions,
     currentlyDefending: queue.slice(0, settings.currentlyDefendingCount || 5).map(toPublic),
     nextDefending: queue
       .slice(settings.currentlyDefendingCount || 5, (settings.currentlyDefendingCount || 5) + (settings.nextDefendingCount || 7))
@@ -700,6 +707,11 @@ function normalizePublicMobileDisplay(value: unknown): PublicMobileDisplay | nul
     enabled: data.enabled !== false,
     publicMessage: String(data.publicMessage || ''),
     zoomUrl: String(data.zoomUrl || ''),
+    queuePositions: typeof data.queuePositions === 'object' && data.queuePositions
+      ? Object.fromEntries(Object.entries(data.queuePositions as Record<string, unknown>)
+        .map(([studentId, position]) => [studentId, Number(position)] as const)
+        .filter(([, position]) => Number.isFinite(position) && position > 0))
+      : undefined,
     currentlyDefending: normalizeRows(data.currentlyDefending),
     nextDefending: normalizeRows(data.nextDefending),
     updatedAt: toIso(data.updatedAt)

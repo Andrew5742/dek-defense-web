@@ -103,6 +103,11 @@ function buildPublicMobileDisplay(state, session) {
   const queue = publicQueueItems(state, session);
   const currentCount = Number(settings.currentlyDefendingCount) || 5;
   const nextCount = Number(settings.nextDefendingCount) || 7;
+  const queuePositions = Object.fromEntries(
+    queue
+      .map((item) => [item.student.id, Number(item.queue.position) || 0])
+      .filter(([, position]) => position > 0)
+  );
   const toPublic = (item) => ({
     studentId: item.student.id,
     fullName: item.student.fullName || '',
@@ -114,6 +119,7 @@ function buildPublicMobileDisplay(state, session) {
     enabled: settings.enabled !== false,
     publicMessage: settings.publicMessage || '',
     zoomUrl: session.zoomUrl || '',
+    queuePositions,
     currentlyDefending: queue.slice(0, currentCount).map(toPublic),
     nextDefending: queue.slice(currentCount, currentCount + nextCount).map(toPublic),
     updatedAt: session.updatedAt || nowIso()
@@ -288,7 +294,7 @@ class FirestoreAgent {
 
       if (command.type === 'open_zoom') {
         await this.closePresentationFullscreen?.();
-        this.closeDisplayFullscreen?.();
+        await this.closeDisplayFullscreen?.();
         await openZoomMeeting(shell, command.zoomUrl || this.zoomUrl);
         await this.setCommandStatus(commandId, 'done');
         await this.addEvent('ZOOM_OPENED', { sessionId: command.sessionId, studentId: command.studentId || null });

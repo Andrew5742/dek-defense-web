@@ -46,7 +46,7 @@ function releaseMainWindowFocus() {
   try { mainWindow.setFullScreen(false); } catch {}
   try { mainWindow.setAlwaysOnTop(false); } catch {}
   try { mainWindow.blur(); } catch {}
-  try { mainWindow.hide(); } catch {}
+  try { mainWindow.minimize(); } catch {}
 }
 
 function restoreMainWindowFocus() {
@@ -56,6 +56,35 @@ function restoreMainWindowFocus() {
     mainWindow.show();
     mainWindow.moveTop();
     mainWindow.focus();
+  } catch {}
+}
+
+function setWindowsTaskbarVisible(visible) {
+  if (process.platform !== 'win32') return;
+  const command = `
+$ErrorActionPreference = 'SilentlyContinue'
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class TaskbarControl {
+  [DllImport("user32.dll")] public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+}
+"@
+$mode = ${visible ? 5 : 0}
+$classes = @('Shell_TrayWnd', 'Shell_SecondaryTrayWnd')
+foreach ($class in $classes) {
+  $handle = [TaskbarControl]::FindWindow($class, $null)
+  if ([int64]$handle -ne 0) { [TaskbarControl]::ShowWindow($handle, $mode) | Out-Null }
+}
+`;
+  try {
+    const child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', command], {
+      windowsHide: true,
+      detached: true,
+      stdio: 'ignore'
+    });
+    child.unref();
   } catch {}
 }
 
@@ -126,6 +155,10 @@ function openDisplayFullscreen(command = {}) {
     y: bounds.y,
     width: bounds.width,
     height: bounds.height,
+    fullscreen: true,
+    kiosk: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
     show: false,
     autoHideMenuBar: true,
     frame: false,
@@ -165,10 +198,15 @@ function openDisplayFullscreen(command = {}) {
   return Promise.allSettled([displayWindowReadyPromise, loadPromise]).then(() => undefined);
 }
 
-function closeDisplayFullscreen() {
+function closeDisplayFullscreen(options = {}) {
+  const { restoreMain = true } = options;
   if (!displayWindow || displayWindow.isDestroyed()) {
     displayWindowReadyPromise = null;
     displayWindow = undefined;
+    if (restoreMain && (!presentationWindow || presentationWindow.isDestroyed())) {
+      setWindowsTaskbarVisible(true);
+      restoreMainWindowFocus();
+    }
     return Promise.resolve();
   }
   const windowToClose = displayWindow;
@@ -179,15 +217,22 @@ function closeDisplayFullscreen() {
   }).finally(() => {
     displayWindowReadyPromise = null;
     if (displayWindow === windowToClose) displayWindow = undefined;
+    if (restoreMain && (!presentationWindow || presentationWindow.isDestroyed())) {
+      setWindowsTaskbarVisible(true);
+      restoreMainWindowFocus();
+    }
   });
 }
 
 function bringDisplayToFront() {
   if (!displayWindow || displayWindow.isDestroyed()) return;
+  setWindowsTaskbarVisible(false);
   releaseMainWindowFocus();
   displayWindow.setFocusable(true);
+  displayWindow.setSkipTaskbar(true);
   if (displayWindow.isMinimized()) displayWindow.restore();
   displayWindow.show();
+  displayWindow.maximize();
   displayWindow.setFullScreen(true);
   displayWindow.setKiosk(true);
   displayWindow.setAlwaysOnTop(true, 'screen-saver');
@@ -195,6 +240,10 @@ function bringDisplayToFront() {
   displayWindow.focus();
   setTimeout(() => {
     if (!displayWindow || displayWindow.isDestroyed()) return;
+    displayWindow.show();
+    displayWindow.maximize();
+    displayWindow.setFullScreen(true);
+    displayWindow.setKiosk(true);
     displayWindow.setAlwaysOnTop(true, 'screen-saver');
     displayWindow.moveTop();
     displayWindow.focus();
@@ -253,9 +302,11 @@ async function closePresentationFullscreen(options = {}) {
   if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
   await closePowerPointSlideShows();
   if (restoreDisplay) bringDisplayToFront();
+  else setWindowsTaskbarVisible(true);
 }
 
 function openPdfFullscreen(pdfPath, command = {}) {
+  setWindowsTaskbarVisible(false);
   releaseMainWindowFocus();
   if (presentationWindow && !presentationWindow.isDestroyed()) {
     presentationWindow.close();
@@ -521,7 +572,8 @@ async function openPresentationFullscreen(prepared, command = {}) {
   // to keep it behind the slideshow, which is unreliable with PowerPoint focus.
   releaseMainWindowFocus();
   await closePresentationFullscreen({ restoreDisplay: false });
-  await closeDisplayFullscreen();
+  await closeDisplayFullscreen({ restoreMain: false });
+  setWindowsTaskbarVisible(false);
   releaseMainWindowFocus();
   if (prepared.kind === 'pdf') {
     openPdfFullscreen(prepared.path, command);
@@ -628,6 +680,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  setWindowsTaskbarVisible(true);
   agent?.stop();
   if (powerBlockerId) powerSaveBlocker.stop(powerBlockerId);
 });

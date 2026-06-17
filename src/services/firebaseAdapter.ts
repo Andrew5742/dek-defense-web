@@ -758,6 +758,16 @@ export function subscribeMobileCompanion(token: string, callback: (snapshot: Mob
   }
 }
 
+export async function fetchMobileQueuePosition(sessionId: string, studentId: string): Promise<number | undefined> {
+  if (!runtime || !sessionId || !studentId) return undefined
+  const stateSnap = await getDoc(doc(runtime.db, APP_STATE_COLLECTION, APP_STATE_DOC))
+  if (!stateSnap.exists() || !stateSnap.data()?.state) return undefined
+  const state = normalizeState(stateSnap.data().state)
+  const queueItem = state.queue.find((item) => item.sessionId === sessionId && item.studentId === studentId)
+  const position = Number(queueItem?.position)
+  return Number.isFinite(position) && position > 0 ? position : undefined
+}
+
 export async function confirmMobileRegistration(token: string): Promise<void> {
   if (!runtime || !token) return
   const pageRef = doc(runtime.db, STUDENT_PAGES_COLLECTION, token)

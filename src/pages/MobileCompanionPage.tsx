@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type React from 'react'
-import { confirmMobileRegistration, expireMobileStudentPage, subscribeMobileCompanion, type MobileCompanionSnapshot } from '../services/firebaseAdapter'
+import { confirmMobileRegistration, expireMobileStudentPage, fetchMobileQueuePosition, subscribeMobileCompanion, type MobileCompanionSnapshot } from '../services/firebaseAdapter'
 
 type Props = {
   token: string
@@ -10,6 +10,7 @@ export function MobileCompanionPage({ token }: Props) {
   const [snapshot, setSnapshot] = useState<MobileCompanionSnapshot>({ studentPage: null, mobileDisplay: null })
   const [loaded, setLoaded] = useState(false)
   const [nowMs, setNowMs] = useState(() => Date.now())
+  const [fallbackQueuePosition, setFallbackQueuePosition] = useState<number | undefined>()
 
   useEffect(() => {
     const unsubscribe = subscribeMobileCompanion(token, (next) => {
@@ -29,6 +30,23 @@ export function MobileCompanionPage({ token }: Props) {
   const expiresMs = student?.expiresAt ? Date.parse(student.expiresAt) : 0
   const isExpired = Boolean(expiresMs && Number.isFinite(expiresMs) && expiresMs <= nowMs)
   const allVisible = useMemo(() => [...(display?.currentlyDefending || []), ...(display?.nextDefending || [])], [display])
+  const visiblePosition = student ? allVisible.find((item) => item.studentId === student.studentId)?.position : undefined
+  const displayPosition = student ? display?.queuePositions?.[student.studentId] : undefined
+  const queuePosition = Number(student?.queuePosition ?? displayPosition ?? visiblePosition ?? fallbackQueuePosition)
+
+  useEffect(() => {
+    if (!student?.sessionId || !student.studentId) return
+    if (Number.isFinite(queuePosition) && queuePosition > 0) return
+    let cancelled = false
+    void fetchMobileQueuePosition(student.sessionId, student.studentId)
+      .then((position) => {
+        if (!cancelled) setFallbackQueuePosition(position)
+      })
+      .catch((error) => console.warn('Mobile queue position fallback failed', error))
+    return () => {
+      cancelled = true
+    }
+  }, [student?.sessionId, student?.studentId, queuePosition])
 
   useEffect(() => {
     if (!isExpired) return
@@ -75,12 +93,7 @@ export function MobileCompanionPage({ token }: Props) {
           <section style={styles.queueCard}>
             <div style={styles.queueNumberLabel}>Ваш номер черги</div>
             <div style={styles.queueNumber}>
-              {(() => {
-                const visiblePosition = allVisible.find((item) => item.studentId === student.studentId)?.position
-                const displayPosition = display?.queuePositions?.[student.studentId]
-                const position = Number(student.queuePosition ?? displayPosition ?? visiblePosition)
-                return Number.isFinite(position) && position > 0 ? position : '—';
-              })()}
+              {Number.isFinite(queuePosition) && queuePosition > 0 ? queuePosition : '...'}
             </div>
           </section>
 

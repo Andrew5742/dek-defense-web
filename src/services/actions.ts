@@ -64,6 +64,49 @@ function isFinalDefenseStatus(status: DefenseStatus): boolean {
   return status === 'defended' || status === 'problem' || status === 'absent'
 }
 
+function collectAvailableStudentsForNewDate(state: AppState, blockedStudentIds = new Set<string>()): Student[] {
+  return state.students.filter((student) => !blockedStudentIds.has(student.id) && !isFinalDefenseStatus(student.defenseStatus))
+}
+
+function createSessionGroupsForStudents(state: AppState, sessionId: string, groupNames: string[]): { groups: Group[]; groupMap: Map<string, Group> } {
+  const groupMap = new Map<string, Group>()
+  const groups = [...state.groups]
+  for (const groupName of groupNames) {
+    const sourceGroup = [...state.groups].reverse().find((group) => group.name === groupName)
+    const group: Group = {
+      id: uid('group'),
+      sessionId,
+      name: groupName,
+      specialtyCode: sourceGroup?.specialtyCode,
+      specialtyName: sourceGroup?.specialtyName,
+      educationProgram: sourceGroup?.educationProgram,
+      studyForm: sourceGroup?.studyForm
+    }
+    groupMap.set(groupName, group)
+    groups.push(group)
+  }
+  return { groups, groupMap }
+}
+
+function resetStudentForNewSession(student: Student, sessionId: string, groupId: string | undefined, now: string): Student {
+  return {
+    ...student,
+    token: uid('token'),
+    registrationConfirmed: false,
+    sessionId,
+    groupId: groupId || student.groupId,
+    registrationStatus: 'not_registered',
+    presentationStatus: 'missing',
+    defenseStatus: 'waiting',
+    registeredAt: undefined,
+    queuePosition: undefined,
+    wantsZoomDemo: false,
+    hasVideo: false,
+    mobilePageExpiresAt: undefined,
+    updatedAt: now
+  }
+}
+
 export function getOnlineUploadUrl(state: AppState): string | undefined {
   const station = state.stations.find((item) => item.online && (item.lanUploadUrl || item.localUploadUrl)) || state.stations.find((item) => item.lanUploadUrl || item.localUploadUrl)
   return (station?.lanUploadUrl || station?.localUploadUrl)?.replace(/\/+$/, '')
@@ -89,11 +132,16 @@ export function getAgentUploadPageUrl(state: AppState, student: Student): string
 
 export function createSession(state: AppState, input: Partial<DefenseSession>): AppState {
   const now = nowIso()
+  const blockedStudentIds = new Set(state.queue.filter((item) => item.sessionId === state.activeSessionId).map((item) => item.studentId))
+  const availableStudents = collectAvailableStudentsForNewDate(state, blockedStudentIds)
+  const groupNames = input.groupNames?.length
+    ? input.groupNames
+    : Array.from(new Set(availableStudents.map((student) => student.groupName).filter(Boolean)))
   const session: DefenseSession = {
     id: uid('session'),
     title: input.title || 'Захист',
     date: input.date || new Date().toISOString().slice(0, 10),
-    groupNames: input.groupNames || [],
+    groupNames,
     registrationOpenFrom: input.registrationOpenFrom || '08:00',
     registrationOpenTo: input.registrationOpenTo || '09:00',
     defenseStartsAt: input.defenseStartsAt || '09:05',
@@ -105,12 +153,24 @@ export function createSession(state: AppState, input: Partial<DefenseSession>): 
     createdAt: now,
     updatedAt: now
   }
-  return addEvent({ ...state, activeSessionId: session.id, sessions: [session, ...state.sessions] }, {
+  const { groups, groupMap } = createSessionGroupsForStudents(state, session.id, groupNames)
+  const movedStudentIds = new Set(availableStudents.map((student) => student.id))
+  const students = movedStudentIds.size
+    ? state.students.map((student) => {
+      if (!movedStudentIds.has(student.id)) return student
+      const group = groupMap.get(student.groupName)
+      return resetStudentForNewSession(student, session.id, group?.id, now)
+    })
+    : state.students
+
+  return addEvent({ ...state, activeSessionId: session.id, sessions: [session, ...state.sessions], groups, students }, {
     sessionId: session.id,
     type: 'SESSION_CREATED',
     actor: 'admin',
-    message: `Створено сесію ${session.title}`,
-    payload: { sessionId: session.id }
+    message: availableStudents.length
+      ? `Створено сесію ${session.title}: додано незахищених студентів (${availableStudents.length})`
+      : `Створено сесію ${session.title}`,
+    payload: { sessionId: session.id, carriedStudentCount: availableStudents.length }
   })
 }
 
@@ -134,7 +194,8 @@ export function createContinuationSession(state: AppState, sourceSessionId: stri
   const sourceSession = state.sessions.find((session) => session.id === sourceSessionId)
   if (!sourceSession) return state
   const now = nowIso()
-  const remainingStudents = state.students.filter((student) => student.sessionId === sourceSessionId && !isFinalDefenseStatus(student.defenseStatus))
+  const blockedStudentIds = new Set(state.queue.filter((item) => item.sessionId === sourceSessionId).map((item) => item.studentId))
+  const remainingStudents = collectAvailableStudentsForNewDate(state, blockedStudentIds)
   const groupNames = Array.from(new Set(remainingStudents.map((student) => student.groupName).filter(Boolean)))
   const session: DefenseSession = {
     id: uid('session'),
@@ -153,42 +214,13 @@ export function createContinuationSession(state: AppState, sourceSessionId: stri
     updatedAt: now
   }
 
-  const groupMap = new Map<string, Group>()
-  const groups = [...state.groups]
-  for (const groupName of groupNames) {
-    const sourceGroup = state.groups.find((group) => group.sessionId === sourceSessionId && group.name === groupName)
-    const group: Group = {
-      id: uid('group'),
-      sessionId: session.id,
-      name: groupName,
-      specialtyCode: sourceGroup?.specialtyCode,
-      specialtyName: sourceGroup?.specialtyName,
-      educationProgram: sourceGroup?.educationProgram,
-      studyForm: sourceGroup?.studyForm
-    }
-    groupMap.set(groupName, group)
-    groups.push(group)
-  }
+  const { groups, groupMap } = createSessionGroupsForStudents(state, session.id, groupNames)
 
   const movedStudentIds = new Set(remainingStudents.map((student) => student.id))
   const students: Student[] = state.students.map((student) => {
     if (!movedStudentIds.has(student.id)) return student
     const group = groupMap.get(student.groupName)
-    return {
-      ...student,
-      token: uid('token'),
-      registrationConfirmed: false,
-      sessionId: session.id,
-      groupId: group?.id || student.groupId,
-      registrationStatus: 'not_registered',
-      presentationStatus: 'missing',
-      defenseStatus: 'waiting',
-      registeredAt: undefined,
-      queuePosition: undefined,
-      wantsZoomDemo: false,
-      hasVideo: false,
-      updatedAt: now
-    }
+    return resetStudentForNewSession(student, session.id, group?.id, now)
   })
 
   return addEvent({
@@ -196,15 +228,58 @@ export function createContinuationSession(state: AppState, sourceSessionId: stri
     activeSessionId: session.id,
     sessions: [session, ...state.sessions],
     groups,
-    students,
-    queue: state.queue.filter((item) => item.sessionId !== sourceSessionId || !movedStudentIds.has(item.studentId)),
-    presentations: state.presentations.filter((item) => !movedStudentIds.has(item.studentId))
+    students
   }, {
     sessionId: session.id,
     type: 'SESSION_CREATED',
     actor: 'admin',
     message: `Створено наступну сесію з незахищених: ${remainingStudents.length} студентів`,
     payload: { sourceSessionId, sessionId: session.id, count: remainingStudents.length }
+  })
+}
+
+export function populateSessionWithAvailableStudents(state: AppState, sessionId: string, sourceSessionId?: string): AppState {
+  const session = state.sessions.find((item) => item.id === sessionId)
+  if (!session || session.isClosed) return state
+  const now = nowIso()
+  const blockedStudentIds = sourceSessionId && sourceSessionId !== sessionId
+    ? new Set(state.queue.filter((item) => item.sessionId === sourceSessionId).map((item) => item.studentId))
+    : new Set<string>()
+  const availableStudents = collectAvailableStudentsForNewDate(state, blockedStudentIds)
+  const studentsToMove = availableStudents.filter((student) => student.sessionId !== sessionId)
+  if (!studentsToMove.length) return state
+
+  const nextGroupNames = Array.from(new Set([
+    ...session.groupNames,
+    ...studentsToMove.map((student) => student.groupName).filter(Boolean)
+  ]))
+  const existingSessionGroups = state.groups.filter((group) => group.sessionId === sessionId)
+  const existingGroupNames = new Set(existingSessionGroups.map((group) => group.name))
+  const missingGroupNames = nextGroupNames.filter((groupName) => !existingGroupNames.has(groupName))
+  const { groups: groupsWithNew, groupMap: newGroupMap } = createSessionGroupsForStudents(state, sessionId, missingGroupNames)
+  const groupMap = new Map<string, Group>()
+  for (const group of groupsWithNew.filter((item) => item.sessionId === sessionId)) groupMap.set(group.name, group)
+  for (const [groupName, group] of newGroupMap) groupMap.set(groupName, group)
+
+  const movedStudentIds = new Set(studentsToMove.map((student) => student.id))
+  const students = state.students.map((student) => {
+    if (!movedStudentIds.has(student.id)) return student
+    const group = groupMap.get(student.groupName)
+    return resetStudentForNewSession(student, sessionId, group?.id, now)
+  })
+
+  return addEvent({
+    ...state,
+    activeSessionId: sessionId,
+    sessions: state.sessions.map((item) => item.id === sessionId ? { ...item, groupNames: nextGroupNames, updatedAt: now } : item),
+    groups: groupsWithNew,
+    students
+  }, {
+    sessionId,
+    type: 'SESSION_UPDATED',
+    actor: 'admin',
+    message: `Підтягнуто незахищених студентів у сесію: ${studentsToMove.length}`,
+    payload: { sessionId, sourceSessionId, count: studentsToMove.length }
   })
 }
 

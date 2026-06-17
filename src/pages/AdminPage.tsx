@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect, Fragment } from 'react'
 import type { AppState, DefenseSession, ImportReview, ProtocolRow, ProtocolSnapshot, Student } from '../shared/types'
 import { downloadTextFile, formatLocalDateTime, nowIso } from '../shared/utils'
-import { addManualStudent, addToQueue, closeDefenseDay, confirmImportReview, createContinuationSession, createSession, removeFromQueue, removeSession, removeStudent, reorderQueue, reorderSession, setQueuePositionAbsolute, requestOpenPresentation, requestOpenUploadPage, requestOpenZoom, requestShowDisplay, requestStartDefenses, saveImportReview, saveProtocol, setDefenseStatus, setRegistrationLock, unsetDefendedStatus, updateImportReview, updateSession, updateStudent, cancelRegistration } from '../services/actions'
+import { addManualStudent, addToQueue, closeDefenseDay, confirmImportReview, createContinuationSession, createSession, populateSessionWithAvailableStudents, removeFromQueue, removeSession, removeStudent, reorderQueue, reorderSession, setQueuePositionAbsolute, requestOpenPresentation, requestOpenUploadPage, requestOpenZoom, requestShowDisplay, requestStartDefenses, saveImportReview, saveProtocol, setDefenseStatus, setRegistrationLock, unsetDefendedStatus, updateImportReview, updateSession, updateStudent, cancelRegistration } from '../services/actions'
 import { importDocx, importFromPastedText } from '../services/importService'
 import { isFirebaseEnabled } from '../services/firebaseAdapter'
 import { buildStudentTemporaryUrl, formatStudentTemporaryPath } from '../services/publicUrl'
@@ -185,9 +185,10 @@ function Overview({ state, setState, activeSession, setActiveSessionId }: Props)
             setActiveSessionId(next.sessions[0].id)
           }}>Створити</button>
           {activeSession && <button onClick={() => {
-            const remaining = state.students.filter((student) => student.sessionId === activeSession.id && student.defenseStatus !== 'defended' && student.defenseStatus !== 'problem' && student.defenseStatus !== 'absent').length
+            const queuedInBaseSession = new Set(state.queue.filter((item) => item.sessionId === activeSession.id).map((item) => item.studentId))
+            const remaining = state.students.filter((student) => !queuedInBaseSession.has(student.id) && student.defenseStatus !== 'defended' && student.defenseStatus !== 'problem' && student.defenseStatus !== 'absent').length
             if (!remaining) {
-              alert('У цій даті немає студентів для перенесення: усі вже мають статус "захистився".')
+              alert('Немає студентів для нової дати: усі вже мають фінальний статус або були в черзі базової дати.')
               return
             }
             if (!confirm(`Створити нову дату з незахищених студентів?\n\nОснова: ${activeSession.title} · ${activeSession.date}\nБуде перенесено: ${remaining}`)) return
@@ -204,8 +205,12 @@ function Overview({ state, setState, activeSession, setActiveSessionId }: Props)
               <button onClick={() => setState(reorderSession(state, s.id, -1))} style={{ padding: '4px 8px' }}>▲</button>
               <button onClick={() => setState(reorderSession(state, s.id, 1))} style={{ padding: '4px 8px' }}>▼</button>
               <button onClick={() => {
+                const targetHasStudents = state.students.some((student) => student.sessionId === s.id)
+                if (!targetHasStudents && !s.isClosed) {
+                  const next = populateSessionWithAvailableStudents(state, s.id, activeSession?.id)
+                  setState(next)
+                }
                 setActiveSessionId(s.id)
-                setState({ ...state, activeSessionId: s.id })
               }}>Обрати</button>
               <button onClick={() => beginEditSession(s)}>Редагувати</button>
               <button className="danger" disabled={s.isClosed === true} onClick={() => {

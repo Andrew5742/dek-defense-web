@@ -181,6 +181,10 @@ function DefenseApp() {
     activeSessionIdRef.current = id
     activeSessionLocalTimestampRef.current = Date.now()
     setActiveSessionId(id)
+    setState((prev) => {
+      if (prev.activeSessionId === id) return prev
+      return { ...prev, activeSessionId: id }
+    })
   }
 
   function mergeNewestById<T extends { id: string; updatedAt?: string }>(localItems: T[], remoteItems: T[]) {
@@ -274,7 +278,6 @@ function DefenseApp() {
       } else {
         const localActiveSessionId = activeSessionIdRef.current
         const keepLocalActiveSession =
-          Date.now() - activeSessionLocalTimestampRef.current < 5000 &&
           Boolean(localActiveSessionId) &&
           next.sessions.some((session) => session.id === localActiveSessionId)
         const nextActiveSessionId = keepLocalActiveSession
@@ -307,7 +310,14 @@ function DefenseApp() {
           setSyncError(error instanceof Error ? error.message : String(error))
         })
       }, shouldSaveFast ? 25 : 800)
-      if (!activeSessionIdRef.current && computedNext.sessions[0]) {
+      const computedActiveSessionExists = computedNext.activeSessionId
+        ? computedNext.sessions.some((session) => session.id === computedNext.activeSessionId)
+        : false
+      if (computedActiveSessionExists && activeSessionIdRef.current !== computedNext.activeSessionId) {
+        activeSessionIdRef.current = computedNext.activeSessionId || ''
+        activeSessionLocalTimestampRef.current = Date.now()
+        setActiveSessionId(computedNext.activeSessionId || '')
+      } else if (!activeSessionIdRef.current && computedNext.sessions[0]) {
         activeSessionIdRef.current = computedNext.sessions[0].id
         setActiveSessionId(computedNext.sessions[0].id)
       }

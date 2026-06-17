@@ -1,6 +1,6 @@
 {
   "name": "dek-defense-electron-agent",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Local Electron Defense Station Agent for DEK Defense Web",
   "main": "src/main.js",
@@ -36,10 +36,12 @@
     "files": [
       "src/**/*",
       "build/icon.*",
+      "scripts/**/*",
       "package.json",
       ".env",
       ".env.example"
     ],
+    "afterPack": "scripts/after-pack-icon.js",
     "icon": "build/icon.ico",
     "win": {
       "target": "nsis",

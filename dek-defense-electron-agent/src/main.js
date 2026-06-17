@@ -40,6 +40,25 @@ function sendToRenderer(channel, payload) {
   }
 }
 
+function releaseMainWindowFocus() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try { mainWindow.setKiosk(false); } catch {}
+  try { mainWindow.setFullScreen(false); } catch {}
+  try { mainWindow.setAlwaysOnTop(false); } catch {}
+  try { mainWindow.blur(); } catch {}
+  try { mainWindow.hide(); } catch {}
+}
+
+function restoreMainWindowFocus() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.moveTop();
+    mainWindow.focus();
+  } catch {}
+}
+
 async function createMainWindow() {
   const windowState = store.get('windowState', {
     width: 1280,
@@ -165,6 +184,7 @@ function closeDisplayFullscreen() {
 
 function bringDisplayToFront() {
   if (!displayWindow || displayWindow.isDestroyed()) return;
+  releaseMainWindowFocus();
   displayWindow.setFocusable(true);
   if (displayWindow.isMinimized()) displayWindow.restore();
   displayWindow.show();
@@ -173,6 +193,12 @@ function bringDisplayToFront() {
   displayWindow.setAlwaysOnTop(true, 'screen-saver');
   displayWindow.moveTop();
   displayWindow.focus();
+  setTimeout(() => {
+    if (!displayWindow || displayWindow.isDestroyed()) return;
+    displayWindow.setAlwaysOnTop(true, 'screen-saver');
+    displayWindow.moveTop();
+    displayWindow.focus();
+  }, 250);
 }
 
 function releaseDisplayFocus() {
@@ -230,6 +256,7 @@ async function closePresentationFullscreen(options = {}) {
 }
 
 function openPdfFullscreen(pdfPath, command = {}) {
+  releaseMainWindowFocus();
   if (presentationWindow && !presentationWindow.isDestroyed()) {
     presentationWindow.close();
   }
@@ -249,9 +276,18 @@ function openPdfFullscreen(pdfPath, command = {}) {
   });
   presentationWindow.setAlwaysOnTop(true, 'screen-saver');
   presentationWindow.once('ready-to-show', () => {
+    releaseMainWindowFocus();
+    presentationWindow.show();
     presentationWindow.setFullScreen(true);
+    presentationWindow.setAlwaysOnTop(true, 'screen-saver');
     presentationWindow.moveTop();
     presentationWindow.focus();
+    setTimeout(() => {
+      if (!presentationWindow || presentationWindow.isDestroyed()) return;
+      presentationWindow.setAlwaysOnTop(true, 'screen-saver');
+      presentationWindow.moveTop();
+      presentationWindow.focus();
+    }, 250);
   });
 
   presentationWindow.loadFile(path.join(__dirname, 'renderer', 'pdf-viewer.html'), {
@@ -329,6 +365,11 @@ public class Win32Focus {
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+  [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr lpdwProcessId);
+  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
 }
 "@
 Add-Type -AssemblyName System.Windows.Forms
@@ -341,7 +382,17 @@ function Focus-Hwnd($hwnd) {
   $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
   [Win32Focus]::ShowWindowAsync($ptr, $SW_SHOWMAXIMIZED) | Out-Null
   [Win32Focus]::SetWindowPos($ptr, $HWND_TOPMOST, $bounds.X, $bounds.Y, $bounds.Width, $bounds.Height, $SWP_SHOWWINDOW) | Out-Null
+  [Win32Focus]::BringWindowToTop($ptr) | Out-Null
+  $foreground = [Win32Focus]::GetForegroundWindow()
+  $currentThread = [Win32Focus]::GetCurrentThreadId()
+  $foregroundThread = [Win32Focus]::GetWindowThreadProcessId($foreground, [IntPtr]::Zero)
+  if ($foregroundThread -ne 0) { [Win32Focus]::AttachThreadInput($currentThread, $foregroundThread, $true) | Out-Null }
+  Start-Sleep -Milliseconds 80
+  [Win32Focus]::SetForegroundWindow($ptr) | Out-Null
+  [Win32Focus]::BringWindowToTop($ptr) | Out-Null
+  if ($foregroundThread -ne 0) { [Win32Focus]::AttachThreadInput($currentThread, $foregroundThread, $false) | Out-Null }
   Start-Sleep -Milliseconds 120
+  [Win32Focus]::SetWindowPos($ptr, $HWND_TOPMOST, $bounds.X, $bounds.Y, $bounds.Width, $bounds.Height, $SWP_SHOWWINDOW) | Out-Null
   [Win32Focus]::SetForegroundWindow($ptr) | Out-Null
 }
 $powerPoint = [Runtime.InteropServices.Marshal]::GetActiveObject('PowerPoint.Application')
@@ -379,6 +430,11 @@ public class Win32Focus {
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+  [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr lpdwProcessId);
+  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
 }
 "@
 Add-Type -AssemblyName System.Windows.Forms
@@ -391,7 +447,17 @@ function Focus-Hwnd($hwnd) {
   $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
   [Win32Focus]::ShowWindowAsync($ptr, $SW_SHOWMAXIMIZED) | Out-Null
   [Win32Focus]::SetWindowPos($ptr, $HWND_TOPMOST, $bounds.X, $bounds.Y, $bounds.Width, $bounds.Height, $SWP_SHOWWINDOW) | Out-Null
+  [Win32Focus]::BringWindowToTop($ptr) | Out-Null
+  $foreground = [Win32Focus]::GetForegroundWindow()
+  $currentThread = [Win32Focus]::GetCurrentThreadId()
+  $foregroundThread = [Win32Focus]::GetWindowThreadProcessId($foreground, [IntPtr]::Zero)
+  if ($foregroundThread -ne 0) { [Win32Focus]::AttachThreadInput($currentThread, $foregroundThread, $true) | Out-Null }
+  Start-Sleep -Milliseconds 80
+  [Win32Focus]::SetForegroundWindow($ptr) | Out-Null
+  [Win32Focus]::BringWindowToTop($ptr) | Out-Null
+  if ($foregroundThread -ne 0) { [Win32Focus]::AttachThreadInput($currentThread, $foregroundThread, $false) | Out-Null }
   Start-Sleep -Milliseconds 120
+  [Win32Focus]::SetWindowPos($ptr, $HWND_TOPMOST, $bounds.X, $bounds.Y, $bounds.Width, $bounds.Height, $SWP_SHOWWINDOW) | Out-Null
   [Win32Focus]::SetForegroundWindow($ptr) | Out-Null
 }
 $filePath = ${psQuote(filePath)}
@@ -453,23 +519,27 @@ if ($slideShow -ne $null) {
 async function openPresentationFullscreen(prepared, command = {}) {
   // A presentation owns the projector screen. Close Display instead of trying
   // to keep it behind the slideshow, which is unreliable with PowerPoint focus.
+  releaseMainWindowFocus();
   await closePresentationFullscreen({ restoreDisplay: false });
   await closeDisplayFullscreen();
+  releaseMainWindowFocus();
   if (prepared.kind === 'pdf') {
     openPdfFullscreen(prepared.path, command);
     return;
   }
   try {
     await openPowerPointFullscreen(prepared.path);
-    for (let attempt = 0; attempt < 4; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 300 : 450));
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 250 : 350));
+      releaseMainWindowFocus();
       await focusPowerPointSlideShow();
     }
   } catch {
     releaseDisplayFocus();
     await openPowerPointProcessFallback(prepared.path);
-    for (let attempt = 0; attempt < 4; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 900 : 450));
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 900 : 350));
+      releaseMainWindowFocus();
       await focusPowerPointSlideShow();
     }
   } finally {

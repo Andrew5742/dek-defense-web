@@ -45,6 +45,12 @@ const PROTOCOL_DEFAULTS: Partial<ProtocolRow> = {
   questions: ''
 }
 
+function isActualRosterStudent(student: Student, session?: DefenseSession): boolean {
+  const excludedIds = (session as DefenseSession & { actualRosterExcludedStudentIds?: string[] } | undefined)?.actualRosterExcludedStudentIds || []
+  if (excludedIds.includes(student.id)) return false
+  return (student as Student & { actualRosterExcluded?: boolean }).actualRosterExcluded !== true
+}
+
 function ProblemEditor({ student, state, setState }: { student: Student; state: AppState; setState: (s: AppState) => void }) {
   const [note, setNote] = useState(student.problemDetails?.note || '')
   const [returnedToStudent, setReturnedToStudent] = useState(student.problemDetails?.returnedToStudent || false)
@@ -143,7 +149,7 @@ function Overview({ state, setState, activeSession, setActiveSessionId }: Props)
   const [zoomUrl, setZoomUrl] = useState('')
   const [editingSession, setEditingSession] = useState<DefenseSession | null>(null)
 
-  const students = activeSession ? state.students.filter((s) => s.sessionId === activeSession.id) : []
+  const students = activeSession ? state.students.filter((s) => s.sessionId === activeSession.id && isActualRosterStudent(s, activeSession)) : []
   const registered = students.filter((s) => s.registrationStatus !== 'not_registered').length
   const ready = students.filter((s) => s.presentationStatus === 'ready' || s.presentationStatus === 'conversion_required').length
   const defended = students.filter((s) => s.defenseStatus === 'defended').length
@@ -326,7 +332,7 @@ function StudentsPanel({ state, setState, session, onEdit }: { state: AppState; 
   const [defenseFilter, setDefenseFilter] = useState<StudentDefenseFilter>('all')
   const [notDefendedGroup, setNotDefendedGroup] = useState('all')
   const [manual, setManual] = useState({ fullName: '', groupName: session.groupNames[0] || '', thesisTitleEdited: '', supervisorEdited: '' })
-  const sessionStudents = state.students.filter((s) => s.sessionId === session.id)
+  const sessionStudents = state.students.filter((s) => s.sessionId === session.id && isActualRosterStudent(s, session))
   const supervisors = uniqueSorted(sessionStudents.map((s) => s.supervisorEdited).filter(Boolean))
   const groups = uniqueSorted(sessionStudents.map((s) => s.groupName).filter(Boolean))
   const students = sessionStudents
@@ -394,7 +400,7 @@ function StudentsPanel({ state, setState, session, onEdit }: { state: AppState; 
 function QueuePanel({ state, setState, session, onEdit }: { state: AppState; setState: (s: AppState) => void; session: DefenseSession; onEdit: (s: Student) => void }) {
   const [showQrToken, setShowQrToken] = useState<string | null>(null)
   const queue = state.queue.filter((q) => q.sessionId === session.id).sort((a, b) => a.position - b.position)
-  const students = state.students.filter((s) => s.sessionId === session.id)
+  const students = state.students.filter((s) => s.sessionId === session.id && isActualRosterStudent(s, session))
   const byId = new Map(students.map((s) => [s.id, s]))
   const notQueued = students.filter((s) => !queue.some((q) => q.studentId === s.id) && s.defenseStatus !== 'defended' && s.defenseStatus !== 'problem' && s.defenseStatus !== 'absent')
   const defended = students.filter((s) => s.defenseStatus === 'defended')
@@ -688,7 +694,7 @@ function ProtocolPanel({ state, setState, session }: { state: AppState; setState
   const protocolBuckets = useMemo(() => {
     const queueOrder = new Map(state.queue.filter((q) => q.sessionId === session.id).map((q) => [q.studentId, q.position]))
     const defendedStudents = state.students
-      .filter((s) => s.sessionId === session.id && s.defenseStatus === 'defended')
+      .filter((s) => s.sessionId === session.id && isActualRosterStudent(s, session) && s.defenseStatus === 'defended')
       .sort((a, b) => {
         const aq = queueOrder.get(a.id) ?? 9999
         const bq = queueOrder.get(b.id) ?? 9999
@@ -814,7 +820,7 @@ function DiagnosticsPanel({ state, activeSession }: { state: AppState; activeSes
   const pendingCommands = state.commands.filter((c) => c.status === 'pending').length
   const failedCommands = state.commands.filter((c) => c.status === 'error').length
   const onlineStations = state.stations.filter((station) => station.online)
-  const activeSessionStudents = activeSession ? state.students.filter((s) => s.sessionId === activeSession.id).length : 0
+  const activeSessionStudents = activeSession ? state.students.filter((s) => s.sessionId === activeSession.id && isActualRosterStudent(s, activeSession)).length : 0
   return <div><h1>Діагностика</h1><div className="panel"><h2>Стан системи</h2>
     <ul className="checklist">
       <li>Web UI запущено</li>

@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect, Fragment } from 'react'
 import type { AppState, DefenseSession, ImportReview, ProtocolRow, ProtocolSnapshot, Student } from '../shared/types'
 import { downloadTextFile, formatLocalDateTime, nowIso } from '../shared/utils'
-import { addManualStudent, addToQueue, closeDefenseDay, confirmImportReview, createContinuationSession, createSession, populateSessionWithAvailableStudents, removeFromQueue, removeSession, removeStudent, reorderQueue, reorderSession, setQueuePositionAbsolute, requestOpenPresentation, requestOpenUploadPage, requestOpenZoom, requestShowDisplay, requestStartDefenses, saveImportReview, saveProtocol, setDefenseStatus, setRegistrationLock, unsetDefendedStatus, updateImportReview, updateSession, updateStudent, cancelRegistration } from '../services/actions'
+import { addManualStudent, addToQueue, closeDefenseDay, confirmImportReview, createContinuationSession, createSession, getAvailableStudentsForNewDate, populateSessionWithAvailableStudents, removeFromQueue, removeSession, removeStudent, reorderQueue, reorderSession, setQueuePositionAbsolute, requestOpenPresentation, requestOpenUploadPage, requestOpenZoom, requestShowDisplay, requestStartDefenses, saveImportReview, saveProtocol, setDefenseStatus, setRegistrationLock, unsetDefendedStatus, updateImportReview, updateSession, updateStudent, cancelRegistration } from '../services/actions'
 import { importDocx, importFromPastedText } from '../services/importService'
 import { isFirebaseEnabled } from '../services/firebaseAdapter'
 import { buildStudentTemporaryUrl, formatStudentTemporaryPath } from '../services/publicUrl'
@@ -186,7 +186,7 @@ function Overview({ state, setState, activeSession, setActiveSessionId }: Props)
           }}>Створити</button>
           {activeSession && <button onClick={() => {
             const queuedInBaseSession = new Set(state.queue.filter((item) => item.sessionId === activeSession.id).map((item) => item.studentId))
-            const remaining = state.students.filter((student) => !queuedInBaseSession.has(student.id) && student.defenseStatus !== 'defended' && student.defenseStatus !== 'problem' && student.defenseStatus !== 'absent').length
+            const remaining = getAvailableStudentsForNewDate(state, queuedInBaseSession, activeSession.id).length
             if (!remaining) {
               alert('Немає студентів для нової дати: усі вже мають фінальний статус або були в черзі базової дати.')
               return

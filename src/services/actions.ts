@@ -64,8 +64,126 @@ function isFinalDefenseStatus(status: DefenseStatus): boolean {
   return status === 'defended' || status === 'problem' || status === 'absent'
 }
 
-function collectAvailableStudentsForNewDate(state: AppState, blockedStudentIds = new Set<string>()): Student[] {
-  return state.students.filter((student) => !blockedStudentIds.has(student.id) && !isFinalDefenseStatus(student.defenseStatus))
+type StudentRosterFields = Student & {
+  rosterKey?: string
+  centralStudentId?: string
+  recoverySource?: string
+}
+
+function rosterKeyForStudent(student: Student): string {
+  const extra = student as StudentRosterFields
+  if (extra.rosterKey) return extra.rosterKey
+  if (extra.centralStudentId) return extra.centralStudentId
+  return normalizeText(`${student.groupName || ''} ${student.fullName || ''}`).toLocaleLowerCase('uk-UA')
+}
+
+function compactLetters(value: string | undefined): string {
+  return normalizeText(value || '')
+    .toLocaleLowerCase('uk-UA')
+    .replace(/[’'`ьъ\s\-().]/g, '')
+    .replace(/[^\p{L}\p{N}]/gu, '')
+}
+
+function compactGroup(value: string | undefined): string {
+  return normalizeText(value || '')
+    .toLocaleLowerCase('uk-UA')
+    .replace(/\s+/g, '')
+    .replace(/-/g, '')
+}
+
+function nameWords(value: string | undefined): string[] {
+  return normalizeText(value || '')
+    .toLocaleLowerCase('uk-UA')
+    .replace(/[().]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+}
+
+function diceCoefficient(left: string, right: string): number {
+  if (!left || !right) return 0
+  if (left === right) return 1
+  const grams = (value: string) => {
+    const map = new Map<string, number>()
+    for (let index = 0; index < value.length - 1; index += 1) {
+      const gram = value.slice(index, index + 2)
+      map.set(gram, (map.get(gram) || 0) + 1)
+    }
+    return map
+  }
+  const leftGrams = grams(left)
+  const rightGrams = grams(right)
+  let overlap = 0
+  let total = 0
+  for (const count of leftGrams.values()) total += count
+  for (const count of rightGrams.values()) total += count
+  for (const [gram, count] of leftGrams) overlap += Math.min(count, rightGrams.get(gram) || 0)
+  return total ? (2 * overlap) / total : 0
+}
+
+function recoveredMatchScore(recovered: Student, source: Student): { value: number; sameGroup: boolean; surname: boolean; firstName: boolean } {
+  const sameGroup = compactGroup(recovered.groupName) === compactGroup(source.groupName)
+  const recoveredName = compactLetters(recovered.fullName)
+  const sourceName = compactLetters(source.fullName)
+  const recoveredWords = nameWords(recovered.fullName)
+  const sourceWords = nameWords(source.fullName)
+  const surname = !!recoveredWords[0] && !!sourceWords[0] && compactLetters(recoveredWords[0]) === compactLetters(sourceWords[0])
+  const firstName = !!recoveredWords[1] && !!sourceWords[1] && compactLetters(recoveredWords[1]) === compactLetters(sourceWords[1])
+  let value = diceCoefficient(recoveredName, sourceName)
+  if (sameGroup) value += 0.25
+  if (surname) value += 0.2
+  if (firstName) value += 0.15
+  if (recoveredName && sourceName && (recoveredName.includes(sourceName) || sourceName.includes(recoveredName))) value += 0.15
+  return { value, sameGroup, surname, firstName }
+}
+
+function inferredFinalRosterKey(student: Student, sourceStudents: Student[]): string {
+  if (!sourceStudents.length || !isRecoveredHistoricalStudent(student)) return rosterKeyForStudent(student)
+  const ranked = sourceStudents
+    .map((source) => ({ source, ...recoveredMatchScore(student, source) }))
+    .sort((left, right) => right.value - left.value)
+  const best = ranked[0]
+  const second = ranked[1]
+  const confident = best && best.value >= 0.82 && (
+    best.value - (second?.value || 0) >= 0.08 ||
+    (best.sameGroup && best.surname && best.firstName)
+  )
+  return confident ? rosterKeyForStudent(best.source) : rosterKeyForStudent(student)
+}
+
+function isRecoveredHistoricalStudent(student: Student): boolean {
+  const extra = student as StudentRosterFields
+  return typeof extra.recoverySource === 'string' && extra.recoverySource.length > 0
+}
+
+export function getAvailableStudentsForNewDate(state: AppState, blockedStudentIds = new Set<string>(), sourceSessionId?: string): Student[] {
+  const sourceStudents = sourceSessionId
+    ? state.students.filter((student) => student.sessionId === sourceSessionId && !isRecoveredHistoricalStudent(student))
+    : []
+  const candidateStudents = sourceStudents.length
+    ? sourceStudents
+    : state.students.filter((student) => !isRecoveredHistoricalStudent(student))
+  const blockedRosterKeys = new Set(
+    state.students
+      .filter((student) => blockedStudentIds.has(student.id))
+      .map(rosterKeyForStudent)
+  )
+  const finalRosterKeys = new Set(
+    state.students
+      .filter((student) => isFinalDefenseStatus(student.defenseStatus))
+      .map((student) => inferredFinalRosterKey(student, sourceStudents))
+  )
+  const byRosterKey = new Map<string, Student>()
+  for (const student of candidateStudents) {
+    const key = rosterKeyForStudent(student)
+    if (!key || blockedRosterKeys.has(key) || finalRosterKeys.has(key)) continue
+    if (isRecoveredHistoricalStudent(student)) continue
+    if (!byRosterKey.has(key)) byRosterKey.set(key, student)
+  }
+  return Array.from(byRosterKey.values())
+}
+
+function collectAvailableStudentsForNewDate(state: AppState, blockedStudentIds = new Set<string>(), sourceSessionId?: string): Student[] {
+  return getAvailableStudentsForNewDate(state, blockedStudentIds, sourceSessionId)
 }
 
 function createSessionGroupsForStudents(state: AppState, sessionId: string, groupNames: string[]): { groups: Group[]; groupMap: Map<string, Group> } {
@@ -195,7 +313,7 @@ export function createContinuationSession(state: AppState, sourceSessionId: stri
   if (!sourceSession) return state
   const now = nowIso()
   const blockedStudentIds = new Set(state.queue.filter((item) => item.sessionId === sourceSessionId).map((item) => item.studentId))
-  const remainingStudents = collectAvailableStudentsForNewDate(state, blockedStudentIds)
+  const remainingStudents = collectAvailableStudentsForNewDate(state, blockedStudentIds, sourceSessionId)
   const groupNames = Array.from(new Set(remainingStudents.map((student) => student.groupName).filter(Boolean)))
   const session: DefenseSession = {
     id: uid('session'),
@@ -245,7 +363,7 @@ export function populateSessionWithAvailableStudents(state: AppState, sessionId:
   const blockedStudentIds = sourceSessionId && sourceSessionId !== sessionId
     ? new Set(state.queue.filter((item) => item.sessionId === sourceSessionId).map((item) => item.studentId))
     : new Set<string>()
-  const availableStudents = collectAvailableStudentsForNewDate(state, blockedStudentIds)
+  const availableStudents = collectAvailableStudentsForNewDate(state, blockedStudentIds, sourceSessionId)
   const studentsToMove = availableStudents.filter((student) => student.sessionId !== sessionId)
   if (!studentsToMove.length) return state
 

@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect, Fragment } from 'react'
 import type { AppState, DefenseSession, ImportReview, ProtocolRow, ProtocolSnapshot, Student } from '../shared/types'
 import { downloadTextFile, formatLocalDateTime, nowIso } from '../shared/utils'
-import { addManualStudent, addToQueue, closeDefenseDay, confirmImportReview, createContinuationSession, createSession, getAvailableStudentsForNewDate, getEffectiveStudentsForSession, populateSessionWithAvailableStudents, removeFromQueue, removeSession, removeStudent, reorderQueue, reorderSession, setQueuePositionAbsolute, requestOpenPresentation, requestOpenUploadPage, requestOpenZoom, requestShowDisplay, requestStartDefenses, saveImportReview, saveProtocol, setDefenseStatus, setRegistrationLock, unsetDefendedStatus, updateImportReview, updateSession, updateStudent, cancelRegistration } from '../services/actions'
+import { addManualStudent, addToQueue, closeDefenseDay, confirmImportReview, createContinuationSession, createSession, getAvailableStudentsForNewDate, populateSessionWithAvailableStudents, removeFromQueue, removeSession, removeStudent, reorderQueue, reorderSession, setQueuePositionAbsolute, requestOpenPresentation, requestOpenUploadPage, requestOpenZoom, requestShowDisplay, requestStartDefenses, saveImportReview, saveProtocol, setDefenseStatus, setRegistrationLock, unsetDefendedStatus, updateImportReview, updateSession, updateStudent, cancelRegistration } from '../services/actions'
 import { importDocx, importFromPastedText } from '../services/importService'
 import { isFirebaseEnabled } from '../services/firebaseAdapter'
 import { buildStudentTemporaryUrl, formatStudentTemporaryPath } from '../services/publicUrl'
@@ -143,7 +143,7 @@ function Overview({ state, setState, activeSession, setActiveSessionId }: Props)
   const [zoomUrl, setZoomUrl] = useState('')
   const [editingSession, setEditingSession] = useState<DefenseSession | null>(null)
 
-  const students = activeSession ? getEffectiveStudentsForSession(state, activeSession.id) : []
+  const students = activeSession ? state.students.filter((s) => s.sessionId === activeSession.id) : []
   const registered = students.filter((s) => s.registrationStatus !== 'not_registered').length
   const ready = students.filter((s) => s.presentationStatus === 'ready' || s.presentationStatus === 'conversion_required').length
   const defended = students.filter((s) => s.defenseStatus === 'defended').length
@@ -326,7 +326,7 @@ function StudentsPanel({ state, setState, session, onEdit }: { state: AppState; 
   const [defenseFilter, setDefenseFilter] = useState<StudentDefenseFilter>('all')
   const [notDefendedGroup, setNotDefendedGroup] = useState('all')
   const [manual, setManual] = useState({ fullName: '', groupName: session.groupNames[0] || '', thesisTitleEdited: '', supervisorEdited: '' })
-  const sessionStudents = getEffectiveStudentsForSession(state, session.id)
+  const sessionStudents = state.students.filter((s) => s.sessionId === session.id)
   const supervisors = uniqueSorted(sessionStudents.map((s) => s.supervisorEdited).filter(Boolean))
   const groups = uniqueSorted(sessionStudents.map((s) => s.groupName).filter(Boolean))
   const students = sessionStudents

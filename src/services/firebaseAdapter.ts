@@ -454,7 +454,7 @@ export class FirebaseRepository implements AppRepository {
     try {
       const snapshot = await getDoc(this.stateRef())
       if (snapshot.exists()) {
-        remoteState = normalizeState(snapshot.data().state)
+        remoteState = mergeExternalState(normalizeState(snapshot.data().state), await this.getExternalState())
         stateToSave = mergeStateForSave(remoteState, state)
       }
     } catch (error) {
@@ -465,6 +465,8 @@ export class FirebaseRepository implements AppRepository {
       ...stateToSave,
       commands: [],
       presentations: [],
+      students: [],
+      protocols: [],
       events: (stateToSave.events || []).slice(0, 50)
     })
     await setDoc(this.stateRef(), {
@@ -549,6 +551,7 @@ export class FirebaseRepository implements AppRepository {
     const remoteQueueByStudentId = new Map(remoteState?.queue.map((item) => [item.studentId, item]) || [])
     
     for (const student of stateToSave.students) {
+      if ((student as Student & { actualRosterSource?: string }).actualRosterSource) continue
       const token = student.token || student.id
       if (isStudentPageExpired(student)) {
         if (!remoteState || remoteState.students.find(s => s.id === student.id && !isStudentPageExpired(s))) {

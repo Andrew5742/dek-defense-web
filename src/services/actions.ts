@@ -68,8 +68,6 @@ type StudentRosterFields = Student & {
   rosterKey?: string
   centralStudentId?: string
   recoverySource?: string
-  protocolNote?: string
-  commissionGrade?: string
 }
 
 function rosterKeyForStudent(student: Student): string {
@@ -152,50 +150,9 @@ function inferredFinalRosterKey(student: Student, sourceStudents: Student[]): st
   return confident ? rosterKeyForStudent(best.source) : rosterKeyForStudent(student)
 }
 
-function findInferredHistoricalFinal(source: Student, historicalFinalStudents: Student[]): Student | undefined {
-  const ranked = historicalFinalStudents
-    .map((historical) => ({ historical, ...recoveredMatchScore(historical, source) }))
-    .sort((left, right) => right.value - left.value)
-  const best = ranked[0]
-  const second = ranked[1]
-  const confident = best && best.value >= 0.82 && (
-    best.value - (second?.value || 0) >= 0.08 ||
-    (best.sameGroup && best.surname && best.firstName)
-  )
-  return confident ? best.historical : undefined
-}
-
 function isRecoveredHistoricalStudent(student: Student): boolean {
   const extra = student as StudentRosterFields
   return typeof extra.recoverySource === 'string' && extra.recoverySource.length > 0
-}
-
-export function getEffectiveStudentsForSession(state: AppState, sessionId: string): Student[] {
-  const sessionStudents = state.students.filter((student) => student.sessionId === sessionId)
-  const sourceStudents = sessionStudents.filter((student) => !isRecoveredHistoricalStudent(student))
-  if (!sourceStudents.length) return sessionStudents
-
-  const historicalFinalStudents = state.students.filter((student) => isRecoveredHistoricalStudent(student) && isFinalDefenseStatus(student.defenseStatus))
-  if (!historicalFinalStudents.length) return sessionStudents
-
-  return sessionStudents.map((student) => {
-    if (isRecoveredHistoricalStudent(student) || isFinalDefenseStatus(student.defenseStatus)) return student
-    const historical = findInferredHistoricalFinal(student, historicalFinalStudents)
-    if (!historical) return student
-    return {
-      ...student,
-      defenseStatus: historical.defenseStatus,
-      defendedAt: historical.defendedAt,
-      defendedSessionId: historical.defendedSessionId || historical.sessionId,
-      problemDetails: historical.problemDetails || student.problemDetails,
-      notes: historical.notes || student.notes,
-      protocolNote: (historical as StudentRosterFields).protocolNote || (student as StudentRosterFields).protocolNote,
-      supervisorGrade: historical.supervisorGrade || student.supervisorGrade,
-      reviewerGrade: historical.reviewerGrade || student.reviewerGrade,
-      projectGrade: historical.projectGrade || student.projectGrade,
-      commissionGrade: (historical as StudentRosterFields).commissionGrade || (student as StudentRosterFields).commissionGrade
-    }
-  })
 }
 
 export function getAvailableStudentsForNewDate(state: AppState, blockedStudentIds = new Set<string>(), sourceSessionId?: string): Student[] {

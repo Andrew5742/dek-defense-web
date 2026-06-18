@@ -1,9 +1,8 @@
 import { useMemo, useState, useEffect, Fragment } from 'react'
 import type { AppState, DefenseSession, ImportReview, ProtocolRow, ProtocolSnapshot, Student } from '../shared/types'
-import { downloadTextFile, formatLocalDateTime, nowIso } from '../shared/utils'
+import { downloadTextFile, formatDefenseDate, formatLocalDateTime, nowIso } from '../shared/utils'
 import { addManualStudent, addToQueue, closeDefenseDay, confirmImportReview, createContinuationSession, createSession, getAvailableStudentsForNewDate, populateSessionWithAvailableStudents, removeFromQueue, removeSession, removeStudent, reorderQueue, reorderSession, setQueuePositionAbsolute, requestOpenPresentation, requestOpenUploadPage, requestOpenZoom, requestShowDisplay, requestStartDefenses, saveImportReview, saveProtocol, setDefenseStatus, setRegistrationLock, unsetDefendedStatus, updateImportReview, updateSession, updateStudent, cancelRegistration } from '../services/actions'
 import { importDocx, importFromPastedText } from '../services/importService'
-import { isFirebaseEnabled } from '../services/firebaseAdapter'
 import { buildStudentTemporaryUrl, formatStudentTemporaryPath } from '../services/publicUrl'
 import { StatusBadge } from '../components/StatusBadge'
 import { StudentEditor } from '../components/StudentEditor'
@@ -197,7 +196,7 @@ function Overview({ state, setState, activeSession, setActiveSessionId }: Props)
               alert('Немає студентів для нової дати: усі вже мають фінальний статус або були в черзі базової дати.')
               return
             }
-            if (!confirm(`Створити нову дату з незахищених студентів?\n\nОснова: ${activeSession.title} · ${activeSession.date}\nБуде перенесено: ${remaining}`)) return
+            if (!confirm(`Створити нову дату з незахищених студентів?\n\nОснова: ${activeSession.title} · ${formatDefenseDate(activeSession.date)}\nБуде перенесено: ${remaining}`)) return
             const next = createContinuationSession(state, activeSession.id, { title, date, registrationOpenFrom: from, registrationOpenTo: to, defenseStartsAt: start, zoomUrl })
             setState(next)
             setActiveSessionId(next.sessions[0].id)
@@ -206,7 +205,7 @@ function Overview({ state, setState, activeSession, setActiveSessionId }: Props)
         <table>
           <thead><tr><th>Назва</th><th>Дата</th><th>Запис</th><th>Групи</th><th>Дії</th></tr></thead>
           <tbody>{[...state.sessions].sort((a, b) => (a.sortOrder ?? state.sessions.indexOf(a)) - (b.sortOrder ?? state.sessions.indexOf(b))).map((s) => <tr key={s.id} className={activeSession?.id === s.id ? 'selected-row' : ''}>
-            <td>{s.title}</td><td>{s.date}</td><td>{s.registrationOpenFrom}-{s.registrationOpenTo}</td><td>{s.groupNames.join(', ') || '-'}</td>
+            <td>{s.title}</td><td>{formatDefenseDate(s.date)}</td><td>{s.registrationOpenFrom}-{s.registrationOpenTo}</td><td>{s.groupNames.join(', ') || '-'}</td>
             <td className="actions compact-actions">
               <button onClick={() => setState(reorderSession(state, s.id, -1))} style={{ padding: '4px 8px' }}>▲</button>
               <button onClick={() => setState(reorderSession(state, s.id, 1))} style={{ padding: '4px 8px' }}>▼</button>
@@ -248,9 +247,9 @@ function Overview({ state, setState, activeSession, setActiveSessionId }: Props)
           <button className="primary" onClick={() => setState(requestStartDefenses(state, activeSession.id))}>Почати захисти</button>
           <button onClick={() => setState(requestShowDisplay(state, activeSession.id))}>Показати Display на ПК захисту</button>
           <button onClick={() => setState(requestOpenZoom(state, activeSession.id))}>Відкрити Zoom meeting</button>
-          <button onClick={() => printStudentsReport(`Захистилися ${activeSession.date}`, students.filter((s) => s.defenseStatus === 'defended'), { includeNotes: true })}>PDF захистилися за день</button>
+          <button onClick={() => printStudentsReport(`Захистилися ${formatDefenseDate(activeSession.date)}`, students.filter((s) => s.defenseStatus === 'defended'), { includeNotes: true })}>PDF захистилися за день</button>
         </div>
-        <small>ПК для захисту отримує команду через Firebase і відкриває потрібний екран у себе.</small>
+        <small>ПК для захисту отримує команду через локальну БД Electron Agent і відкриває потрібний екран у себе.</small>
       </div>}
       {activeSession && <div className="stats-grid">
         <div className="stat"><span>Студентів</span><strong>{students.length}</strong></div>
@@ -375,8 +374,8 @@ function StudentsPanel({ state, setState, session, onEdit }: { state: AppState; 
         </select></label>
       </div>
       <div className="toolbar no-margin">
-        <button onClick={() => printStudentsReport(`Не захистилися ${session.date}`, notDefendedForReport, { includeNotes: true })}>PDF не захистились</button>
-        <button onClick={() => printStudentsReport(`Захистилися ${session.date}`, sessionStudents.filter((s) => s.defenseStatus === 'defended'), { includeNotes: true })}>PDF захистилися за день</button>
+        <button onClick={() => printStudentsReport(`Не захистилися ${formatDefenseDate(session.date)}`, notDefendedForReport, { includeNotes: true })}>PDF не захистились</button>
+        <button onClick={() => printStudentsReport(`Захистилися ${formatDefenseDate(session.date)}`, sessionStudents.filter((s) => s.defenseStatus === 'defended'), { includeNotes: true })}>PDF захистилися за день</button>
       </div>
     </div>
     <div className="panel">
@@ -419,9 +418,9 @@ function QueuePanel({ state, setState, session, onEdit }: { state: AppState; set
       <button className="primary" onClick={() => setState(requestStartDefenses(state, session.id))}>Почати захисти</button>
       <button onClick={() => setState(requestShowDisplay(state, session.id))}>Display fullscreen</button>
       <button onClick={() => setState(requestOpenZoom(state, session.id))}>Відкрити Zoom meeting</button>
-      <button onClick={() => printStudentsReport(`Захистилися ${session.date}`, defended, { includeNotes: true })}>PDF захистилися за день</button>
+      <button onClick={() => printStudentsReport(`Захистилися ${formatDefenseDate(session.date)}`, defended, { includeNotes: true })}>PDF захистилися за день</button>
       <button className="danger" disabled={dayClosed || !queue.length} onClick={() => {
-        if (confirm(`Закрити день захисту?\n\n${session.title} · ${session.date}\n\nПісля цього порядок черги, видалення з черги, анулювання записів і завантаження презентацій буде заблоковано. Локальні презентації на ПК захисту буде очищено командою Agent.`)) {
+        if (confirm(`Закрити день захисту?\n\n${session.title} · ${formatDefenseDate(session.date)}\n\nПісля цього порядок черги, видалення з черги, анулювання записів і завантаження презентацій буде заблоковано. Локальні презентації на ПК захисту буде очищено командою Agent.`)) {
           setState(closeDefenseDay(state, session.id))
         }
       }}>Закрити день</button>
@@ -621,7 +620,7 @@ function QueuePanel({ state, setState, session, onEdit }: { state: AppState; set
         </div>
       </div>)}
     </div>
-    <details className="panel"><summary>Захистились за {session.date} - {defended.length}</summary>{defended.map((s) => <div className="list-row" key={s.id}><span>{s.fullName}</span><button onClick={() => setState(requestOpenPresentation(state, session.id, s.id))}>Відкрити презентацію</button></div>)}</details>
+    <details className="panel"><summary>Захистились за {formatDefenseDate(session.date)} - {defended.length}</summary>{defended.map((s) => <div className="list-row" key={s.id}><span>{s.fullName}</span><button onClick={() => setState(requestOpenPresentation(state, session.id, s.id))}>Відкрити презентацію</button></div>)}</details>
   </div>
 }
 
@@ -824,8 +823,8 @@ function DiagnosticsPanel({ state, activeSession }: { state: AppState; activeSes
   return <div><h1>Діагностика</h1><div className="panel"><h2>Стан системи</h2>
     <ul className="checklist">
       <li>Web UI запущено</li>
-      <li>Firebase config: {isFirebaseEnabled() ? 'підключено' : 'не знайдено env-конфіг'}</li>
-      <li>Активна сесія: {activeSession ? activeSession.title + ' · ' + activeSession.date : 'не обрано'}</li>
+      <li>Локальна БД Agent: активна, якщо відкрито URL агента і станція онлайн</li>
+      <li>Активна сесія: {activeSession ? activeSession.title + ' · ' + formatDefenseDate(activeSession.date) : 'не обрано'}</li>
       <li>Студенти активної сесії: {activeSessionStudents}</li>
       <li>Electron Agent онлайн: {onlineStations.length ? onlineStations.map((s) => s.name || s.id).join(', ') : 'не бачимо станцію'}</li>
       <li>Upload URL Agent: {onlineStations.length ? onlineStations.map((s) => s.lanUploadUrl || s.localUploadUrl || 'без upload URL').join(', ') : '-'}</li>

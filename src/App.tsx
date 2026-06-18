@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState, useRef } from 'react'
 import type { AppState } from './shared/types'
 import { emptyState } from './shared/utils'
-import { localRepository } from './services/localRepository'
-import { firebaseRepository, isFirebaseEnabled, signInAdmin } from './services/firebaseAdapter'
+import { localServerRepository, type LocalServerConnectionStatus } from './services/localServerRepository'
 import { AdminPage } from './pages/AdminPage'
 import { StudentPage } from './pages/StudentPage'
 import { DisplayPage } from './pages/DisplayPage'
@@ -10,6 +9,9 @@ import { AgentPage } from './pages/AgentPage'
 import { MobileCompanionPage } from './pages/MobileCompanionPage'
 
 type Page = 'admin' | 'student' | 'display' | 'agent'
+type SubscribableRepository = typeof localServerRepository & {
+  subscribe?: (callback: (state: AppState) => void, onStatus?: (status: LocalServerConnectionStatus) => void) => () => void
+}
 
 const ADMIN_AUTH_KEY = 'dek-defense-admin-auth'
 const DISPLAY_LOCK_KEY = 'dek-defense-display-locked'
@@ -56,7 +58,7 @@ function AdminLogin({ onAdminLogin }: { onAdminLogin: () => void }) {
   async function submitAdmin() {
     setBusy(true)
     try {
-      if (isFirebaseEnabled()) await signInAdmin(email.trim(), password)
+      if (password !== DISPLAY_EXIT_PASSWORD) throw new Error('Неправильний службовий пароль')
       localStorage.setItem(ADMIN_AUTH_KEY, '1')
       setError('')
       onAdminLogin()
@@ -75,12 +77,12 @@ function AdminLogin({ onAdminLogin }: { onAdminLogin: () => void }) {
             <div className="role-kicker">DEK Defense</div>
             <h1>Адмінка комісії</h1>
           </div>
-          <div className="entry-env">GitHub Pages + Firebase</div>
+          <div className="entry-env">Firebase Hosting + Local Agent</div>
         </div>
 
         <section className="entry-card admin-login-card">
           <h2>Вхід секретаря / комісії</h2>
-          <p>GitHub Pages версія містить тільки адмінку. Запис студентів, display і локальне відкриття презентацій працюють у desktop Electron застосунку на ПК захисту.</p>
+          <p>Адмінка працює з локальною БД Electron Agent. Запис студентів, Display і відкриття презентацій доступні на ПК захисту.</p>
           <label>
             Email
             <input value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" />
@@ -91,7 +93,7 @@ function AdminLogin({ onAdminLogin }: { onAdminLogin: () => void }) {
           </label>
           {error && <div className="form-error">{error}</div>}
           <button className="primary full-width" disabled={busy} onClick={() => void submitAdmin()}>{busy ? 'Вхід...' : 'Увійти в адмінку'}</button>
-          <div className="login-hint">Для одночасної роботи кількох людей можна використовувати той самий Firebase акаунт: зміни мержаться перед записом у Firestore.</div>
+          <div className="login-hint">Кілька членів комісії можуть працювати одночасно, відкривши локальну адресу Agent у тій самій мережі.</div>
         </section>
       </section>
     </main>
@@ -159,23 +161,38 @@ function FullscreenLockOverlay({ onUnlock, onReturnFullscreen }: { onUnlock: () 
   </div>
 }
 
+function ServiceUnavailableScreen({ interrupted }: { interrupted: boolean }) {
+  return <main className="service-unavailable">
+    <section className="service-unavailable-card">
+      <div className="service-unavailable-face" aria-hidden="true">(｡•́︿•̀｡)</div>
+      <h1>{interrupted ? 'Йооой, схоже на технічну проблему' : 'Упс, схоже захисти ще не почались'}</h1>
+      <p>{interrupted
+        ? 'Перепрошуємо. Працюйте в ручному режимі, не перериваючи процедуру захисту.'
+        : 'Зверніться до секретаря, якщо це не так.'}</p>
+      <button className="primary" onClick={() => window.location.reload()}>Перевірити з’єднання</button>
+    </section>
+  </main>
+}
+
 function DefenseApp() {
   const desktopDefense = isDesktopDefenseRuntime()
   const [state, setStateRaw] = useState<AppState>(emptyState())
   const [loaded, setLoaded] = useState(false)
   const [syncError, setSyncError] = useState('')
+  const [connectionStatus, setConnectionStatus] = useState<LocalServerConnectionStatus>('connecting')
   const [page, setPageRaw] = useState<Page>(readInitialPage)
   const [adminAuthed, setAdminAuthed] = useState(() => desktopDefense || localStorage.getItem(ADMIN_AUTH_KEY) === '1')
   const [activeSessionId, setActiveSessionId] = useState<string>('')
   const [displayLocked, setDisplayLocked] = useState(() => desktopDefense && page === 'display' && localStorage.getItem(DISPLAY_LOCK_KEY) === '1')
   const [studentLocked, setStudentLocked] = useState(() => desktopDefense && page === 'student' && localStorage.getItem(STUDENT_LOCK_KEY) === '1')
   const [showLockOverlay, setShowLockOverlay] = useState(false)
-  const repository = firebaseRepository || localRepository
+  const repository: SubscribableRepository = localServerRepository
   const saveTimeoutRef = useRef<number>(0)
   const localSaveTimestampRef = useRef<number>(0)
   const forcedSessionIdRef = useRef<string | null>(null)
   const activeSessionIdRef = useRef<string>('')
   const activeSessionLocalTimestampRef = useRef<number>(0)
+  const hasConnectedRef = useRef(false)
 
   function chooseActiveSessionId(id: string) {
     activeSessionIdRef.current = id
@@ -222,10 +239,9 @@ function DefenseApp() {
     let timeoutId = 0
     const loadState = Promise.race([
       repository.getState(),
-      new Promise<AppState>((resolve) => {
+      new Promise<AppState>((_, reject) => {
         timeoutId = window.setTimeout(() => {
-          setSyncError('Firebase не відповів за 8 секунд, відкрито локальний порожній стан')
-          resolve(emptyState())
+          reject(new Error('Локальна БД Agent не відповіла за 8 секунд'))
         }, 8000)
       })
     ])
@@ -233,6 +249,8 @@ function DefenseApp() {
     loadState.then((s) => {
       if (disposed) return
       window.clearTimeout(timeoutId)
+      hasConnectedRef.current = true
+      setConnectionStatus('online')
       setStateRaw(s)
       const params = new URLSearchParams(location.search)
       const sessionFromUrl = params.get('session')
@@ -245,13 +263,14 @@ function DefenseApp() {
       if (disposed) return
       window.clearTimeout(timeoutId)
       setSyncError(error instanceof Error ? error.message : String(error))
+      setConnectionStatus('offline')
       setLoaded(true)
     })
 
-    const unsubscribe = firebaseRepository?.subscribe((next) => {
+    const unsubscribe = repository.subscribe?.((next) => {
       if (disposed) return
       // If we just saved locally within the last 5 seconds, merge carefully:
-      // prefer local student/queue data if it's newer than what Firebase is returning
+      // Prefer local student/queue data if it is newer than the server snapshot.
       const msSinceLocalSave = Date.now() - localSaveTimestampRef.current
       if (msSinceLocalSave < 5000) {
         setStateRaw((local) => {
@@ -286,6 +305,13 @@ function DefenseApp() {
         activeSessionIdRef.current = nextActiveSessionId
         setActiveSessionId(nextActiveSessionId)
       }
+    }, (status) => {
+      if (disposed) return
+      setConnectionStatus(status)
+      if (status === 'online') {
+        hasConnectedRef.current = true
+        setSyncError('')
+      }
     })
 
     return () => {
@@ -303,7 +329,7 @@ function DefenseApp() {
       const shouldSaveFast = commandsChanged(prev.commands, computedNext.commands)
       setSyncError('')
       window.clearTimeout(saveTimeoutRef.current)
-      // Mark that we have a pending local change so Firebase subscription won't overwrite it
+      // Mark the pending local change so the server subscription does not overwrite it.
       localSaveTimestampRef.current = Date.now()
       saveTimeoutRef.current = window.setTimeout(() => {
         void repository.saveState(computedNext).catch((error) => {
@@ -394,6 +420,10 @@ function DefenseApp() {
   )
 
   if (!loaded) return <div className="boot">Завантаження...</div>
+
+  if (connectionStatus === 'offline') {
+    return <ServiceUnavailableScreen interrupted={hasConnectedRef.current} />
+  }
 
   if (!desktopDefense && !adminAuthed) {
     return <AdminLogin onAdminLogin={() => setAdminAuthed(true)} />

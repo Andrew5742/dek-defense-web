@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AppState, DefenseSession, Student } from '../shared/types'
-import { canRegister } from '../shared/utils'
+import { canRegister, formatDefenseDate } from '../shared/utils'
 import { getAgentUploadPageUrl, updateStudent, cancelRegistration, addToQueue } from '../services/actions'
 import { buildStudentTemporaryUrl, formatStudentTemporaryPath } from '../services/publicUrl'
 import { StatusBadge } from '../components/StatusBadge'
@@ -84,7 +84,7 @@ export function StudentPage({ state, setState, activeSession, publicMode = false
         <div className="student-head">
           <div>
             <h1>Запис на захист</h1>
-            <p>{activeSession.title} · {activeSession.date} · запис {activeSession.registrationOpenFrom}-{activeSession.registrationOpenTo}</p>
+            <p>{activeSession.title} · {formatDefenseDate(activeSession.date)} · запис {activeSession.registrationOpenFrom}-{activeSession.registrationOpenTo}</p>
             {publicMode && <small className="role-note">Desktop-режим ПК захисту. Адмінка з цієї сторінки недоступна.</small>}
           </div>
           {publicMode && onStartFullscreen && <button type="button" onClick={onStartFullscreen}>Повноекранний запис</button>}

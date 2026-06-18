@@ -1,89 +1,52 @@
-# DEK Defense Hybrid v1
+# DEK Defense Hybrid
 
-Строга напівлокальна система для секретаря ДЕК:
+Напівлокальна система організації захистів дипломних робіт.
 
-- Admin: імпорт списку студентів, редагування, черга, протокол.
-- Student: пошук себе у внутрішньому списку, запис, обовʼязкове завантаження презентації.
-- Agent: локальний демо-модуль для презентацій. У фінальній версії буде окремий Local Defense Agent.
-- Display: екран черги для аудиторії.
+## Архітектура
 
-## Локальний запуск без GitHub Pages і без БД
+- `DEK Defense Station` запускає локальну SQLite-базу, HTTP/WebSocket API, студентський запис, Display і виконання команд.
+- Адмінка комісії працює через локальну адресу Agent, наприклад `http://192.168.0.10:3050`.
+- Презентації та відео зберігаються лише локально на ПК захисту.
+- Firebase використовується лише для статичного Hosting. Firestore/Auth/Storage у runtime не використовуються.
+- Якщо Agent вимкнений, локальна база та команди недоступні.
 
-### Windows PowerShell
+## Запуск Agent
+
+Готові Windows-артефакти після збірки:
+
+```text
+dek-defense-electron-agent/dist/DEK Defense Station Setup 0.1.3.exe
+dek-defense-electron-agent/dist/win-unpacked/DEK Defense Station.exe
+```
+
+Розробницький запуск:
 
 ```powershell
-cd C:\Users\reonf\Desktop\dek-defense-hybrid-v1
+npm install
+npm run build
+cd dek-defense-electron-agent
 npm install
 npm run dev
 ```
 
-### macOS Terminal
+## Перевірки
 
-```bash
-cd ~/Desktop/dek-defense-hybrid-v1
-npm install
-npm run dev
+```powershell
+npm run typecheck
+npm run build
+cd dek-defense-electron-agent
+npm run test:local
+npm run build:unpacked
 ```
 
-Після запуску відкрий адресу з терміналу, зазвичай:
+`test:local` запускає ізольовану тимчасову базу й перевіряє 64 студентів, паралельні записи, мобільні сторінки, дедуплікацію, повтори та всі типи команд. Робоча база користувача під час тесту не змінюється.
 
-```text
-http://127.0.0.1:5173/
+## Firebase Hosting
+
+Скопіюйте `.env.production.example` у локальний `.env.production` і задайте публічний URL. Реальний `.env.production` не комітиться.
+
+```powershell
+npm run deploy:firebase
 ```
 
-## Як тестувати
-
-1. В адмінці створи сесію захисту.
-2. Перейди в `Імпорт`.
-3. Завантаж DOCX зі структурою: № / ПІБ / Тема / Керівник.
-4. На екрані Import Review відредагуй тему, керівника або ПІБ.
-5. Натисни `Підтвердити імпорт`.
-6. Перейди у вкладку `Студенти` або `Черга`.
-7. Перейди у верхньому меню `Студенти` — це студентська сторінка.
-8. Знайди студента, обери його, завантаж презентацію.
-9. В адмінці побачиш статус презентації.
-10. Натисни `Відкрити презу` в черзі.
-11. Перейди в `Agent`, виконай команду відкриття.
-12. Протокол формується у вкладці `Протокол`.
-
-## Важливе
-
-Це локальна веб-версія для перевірки логіки і UI. Презентації зараз зберігаються у браузерному IndexedDB, а не в системній папці.
-
-Фінальна архітектура:
-
-```text
-GitHub Pages Web App
-  Admin / Student / Display
-Firebase Firestore
-  сесії, студенти, черга, статуси, event log, команди
-Local Defense Agent
-  локальне приймання презентацій, системна папка, конвертація в PDF, fullscreen показ
-```
-
-## Чому поки DOCX, не PDF
-
-DOCX має чисту таблицю і краще підходить для автоматичного імпорту. PDF часто ламає переноси рядків. PDF імпорт буде окремим модулем через pdf.js або backend/agent parser.
-
-## Підготовка до Firebase
-
-У проєкті вже є `src/services/firebaseAdapter.ts` і `firebase/firestore.rules`. Поки використовується LocalRepository.
-
-Для підключення Firebase пізніше:
-
-1. Створити Firebase project.
-2. Увімкнути Firestore.
-3. Додати Web App у Firebase Console.
-4. Створити `.env.local` з ключами.
-5. Замінити LocalRepository на FirebaseRepository.
-
-Приклад `.env.local`:
-
-```env
-VITE_FIREBASE_API_KEY=...
-VITE_FIREBASE_AUTH_DOMAIN=...
-VITE_FIREBASE_PROJECT_ID=...
-VITE_FIREBASE_STORAGE_BUCKET=...
-VITE_FIREBASE_MESSAGING_SENDER_ID=...
-VITE_FIREBASE_APP_ID=...
-```
+Команда збирає лише статичний сайт і виконує `firebase deploy --only hosting`.

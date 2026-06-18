@@ -8,6 +8,7 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron .",
+    "test:local": "node scripts/test-local-server.cjs",
     "dist:win": "electron-builder --win",
     "dist:mac": "electron-builder --mac",
     "build:unpacked": "electron-builder --win --dir"
@@ -17,11 +18,11 @@
     "dotenv": "^16.4.7",
     "electron-store": "^8.2.0",
     "express": "^4.19.2",
-    "firebase": "^10.14.1",
     "multer": "^1.4.5-lts.1",
     "pdfjs-dist": "^4.7.76",
     "qrcode": "^1.5.4",
     "rcedit": "^5.0.2",
+    "sql.js": "^1.13.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
@@ -37,8 +38,14 @@
       "src/**/*",
       "build/icon.*",
       "scripts/**/*",
+      {
+        "from": "../dist",
+        "to": "dist",
+        "filter": [
+          "**/*"
+        ]
+      },
       "package.json",
-      ".env",
       ".env.example"
     ],
     "afterPack": "scripts/after-pack-icon.js",

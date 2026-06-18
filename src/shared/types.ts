@@ -181,6 +181,7 @@ export interface Command {
   dedupeKey?: string
   audience?: 'agent' | 'student' | 'both'
   expiresAt?: string
+  nextAttemptAt?: string
   handledAt?: string
   createdAt: string
   updatedAt: string
@@ -265,6 +266,8 @@ export interface ImportReview {
 }
 
 export interface AppState {
+  _revision?: number
+  _serverUpdatedAt?: string
   activeSessionId?: string
   sessions: DefenseSession[]
   groups: Group[]
@@ -280,5 +283,5 @@ export interface AppState {
 
 export interface AppRepository {
   getState(): Promise<AppState>
-  saveState(state: AppState): Promise<void>
+  saveState(state: AppState): Promise<AppState | void>
 }

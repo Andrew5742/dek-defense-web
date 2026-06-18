@@ -62,6 +62,12 @@ export function formatLocalDateTime(iso?: string): string {
   return new Date(iso).toLocaleString('uk-UA')
 }
 
+export function formatDefenseDate(value?: string): string {
+  if (!value) return '—'
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  return match ? `${match[3]}-${match[2]}-${match[1]}` : value
+}
+
 export function canRegister(session: { date: string; registrationOpenFrom: string; registrationOpenTo: string; manualRegistrationOpen: boolean; isRegistrationLocked: boolean; isClosed?: boolean }) {
   if (session.isClosed) return false
   if (session.manualRegistrationOpen) return true

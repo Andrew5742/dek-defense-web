@@ -8,6 +8,7 @@ interface Window {
       stationName: string
       uploadUrl: string
       lanUploadUrl?: string
+      dbPath?: string
       storageRoot: string
       addresses: Array<{ name: string; address: string }>
     }>

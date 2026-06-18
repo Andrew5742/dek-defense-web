@@ -19,14 +19,14 @@ async function init() {
   document.getElementById('uploadUrl').textContent = status.lanUploadUrl || status.uploadUrl;
   document.getElementById('storageRoot').textContent = status.storageRoot;
   document.getElementById('addresses').textContent = status.addresses.map((x) => `${x.name}: ${x.address}`).join(', ') || '-';
-  log('Агент запущено', status);
+  log('Agent запущено', status);
 }
 
-window.dekAgent.on('agent-ready', (payload) => log('Firebase/Upload готові', payload));
-window.dekAgent.on('agent-error', (payload) => log('Помилка агента', payload));
+window.dekAgent.on('agent-ready', (payload) => log('Локальна БД/Upload готові', payload));
+window.dekAgent.on('agent-error', (payload) => log('Помилка Agent', payload));
 window.dekAgent.on('command-running', (payload) => log(`Команда: ${payload.command?.type}`, payload.command));
 window.dekAgent.on('presentation-uploaded', (payload) => log('Презентацію завантажено локально', payload));
-window.dekAgent.on('presentation-converted', (payload) => log(payload.directOpenFallback ? 'PDF не створено, увімкнено прямий запуск PowerPoint' : 'Презентацію сконвертовано у PDF', payload));
+window.dekAgent.on('presentation-converted', (payload) => log(payload.directOpenFallback ? 'PDF не створено, увімкнено прямий запуск PowerPoint' : 'Презентацію конвертовано у PDF', payload));
 
 document.getElementById('openStorageBtn').addEventListener('click', () => window.dekAgent.openStorage());
 init().catch((error) => log('Помилка запуску UI', { error: error.message }));

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type React from 'react'
-import { confirmMobileRegistration, expireMobileStudentPage, fetchMobileQueuePosition, subscribeMobileCompanion, type MobileCompanionSnapshot } from '../services/firebaseAdapter'
+import { confirmMobileRegistration, expireMobileStudentPage, fetchMobileQueuePosition, subscribeMobileCompanion, type MobileCompanionSnapshot, type MobileConnectionStatus } from '../services/mobileCompanion'
 
 type Props = {
   token: string
@@ -11,11 +11,16 @@ export function MobileCompanionPage({ token }: Props) {
   const [loaded, setLoaded] = useState(false)
   const [nowMs, setNowMs] = useState(() => Date.now())
   const [fallbackQueuePosition, setFallbackQueuePosition] = useState<number | undefined>()
+  const [connectionStatus, setConnectionStatus] = useState<MobileConnectionStatus>('connecting')
+  const [wasConnected, setWasConnected] = useState(false)
 
   useEffect(() => {
     const unsubscribe = subscribeMobileCompanion(token, (next) => {
       setSnapshot(next)
       setLoaded(true)
+    }, (status) => {
+      setConnectionStatus(status)
+      if (status === 'online') setWasConnected(true)
     })
     return unsubscribe
   }, [token])
@@ -52,6 +57,7 @@ export function MobileCompanionPage({ token }: Props) {
     if (!isExpired) return
     void expireMobileStudentPage(token).catch((error) => console.warn('Mobile page cleanup failed', error))
   }, [isExpired, token])
+  if (connectionStatus === 'offline') return <TechnicalProblemScreen wasConnected={wasConnected} />
   if (!loaded) return <Screen><div style={styles.muted}>Завантаження...</div></Screen>
   if (!student || isExpired) return <UnavailableScreen />
   // Removed early return for display.enabled === false
@@ -146,6 +152,18 @@ function UnavailableScreen() {
   </Screen>
 }
 
+function TechnicalProblemScreen({ wasConnected }: { wasConnected: boolean }) {
+  return <Screen>
+    <section style={styles.technicalBox}>
+      <div style={styles.technicalFace}>(｡•́︿•̀｡)</div>
+      <h1 style={styles.unavailableTitle}>Йооой, схоже на технічну проблему</h1>
+      <p style={styles.muted}>{wasConnected
+        ? 'Перепрошую, слідкуй за вказівками комісії, я скоро повернусь.'
+        : 'Сторінка захисту поки недоступна. Слідкуй за вказівками комісії.'}</p>
+    </section>
+  </Screen>
+}
+
 function QueueSection({ title, rows, studentId }: { title: string; rows: Array<{ studentId: string; fullName: string; groupName: string; position: number }>; studentId: string }) {
   return <section style={styles.section}>
     <h3 style={styles.sectionTitle}>{title}</h3>
@@ -200,6 +218,8 @@ const styles = {
   error: { color: '#ef4444', textAlign: 'center' as const, marginTop: 40 },
   unavailableBox: { marginTop: 80, background: '#0f172a', border: '1px solid #334155', padding: 24, textAlign: 'center' as const },
   unavailableTitle: { color: '#e2e8f0', fontSize: 24, margin: '0 0 12px' },
+  technicalBox: { marginTop: 80, background: 'linear-gradient(145deg, #0f2a55, #111827)', border: '1px solid #3b82f6', padding: 28, textAlign: 'center' as const },
+  technicalFace: { color: '#7dd3fc', fontSize: 42, marginBottom: 16 },
   problemBox: { background: '#1e293b', border: '1px solid #ef4444', padding: 20, lineHeight: 1.5 },
   problemTitle: { color: '#ef4444', margin: '0 0 12px' },
   warningText: { margin: '0 0 16px', color: '#f59e0b', fontWeight: 700 },

@@ -1,4 +1,5 @@
 import type { DefenseSession } from '../shared/types'
+import { formatDefenseDate } from '../shared/utils'
 
 type Page = 'admin' | 'student' | 'display' | 'agent'
 
@@ -27,7 +28,7 @@ export function TopBar({ page, setPage, activeSession }: { page: Page; setPage: 
       </nav>
       <div className="session-mini">
         <strong>{activeSession?.title || 'Сесію не обрано'}</strong>
-        <span>{activeSession?.date || '—'}</span>
+        <span>{formatDefenseDate(activeSession?.date)}</span>
       </div>
     </header>
   )

@@ -3,11 +3,10 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 require('dotenv').config();
 
 const fs = require('fs');
-const { app, BrowserWindow, ipcMain, shell, powerSaveBlocker } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, powerSaveBlocker, Menu } = require('electron');
 const { spawn } = require('child_process');
 const Store = require('electron-store');
-const { createFirebaseClient } = require('./lib/firebaseClient');
-const { FirestoreAgent } = require('./lib/firestoreAgent');
+const { createLocalServer } = require('./lib/localServer');
 const { getLocalIPv4Addresses, getPreferredLocalAddress } = require('./lib/network');
 const { getStorageRoot } = require('./lib/paths');
 const { openZoomMeeting } = require('./lib/zoom');
@@ -17,8 +16,8 @@ let mainWindow;
 let presentationWindow;
 let displayWindow;
 let displayWindowReadyPromise = null;
-let firebase;
 let agent;
+let localServer;
 let powerBlockerId = null;
 
 const STATION_ID = process.env.STATION_ID || store.get('stationId') || `station-${Date.now()}`;
@@ -26,7 +25,7 @@ const os = require('os');
 const STATION_NAME = process.env.STATION_NAME || os.hostname() || '\u041F\u041A \u0437\u0430\u0445\u0438\u0441\u0442\u0443';
 const UPLOAD_PORT = Number(process.env.UPLOAD_PORT || 3050);
 const ZOOM_URL = process.env.ZOOM_URL || '';
-const WEB_APP_URL = process.env.WEB_APP_URL || process.env.VITE_PUBLIC_APP_URL || 'https://dek-defence.web.app/';
+const WEB_APP_URL = process.env.WEB_APP_URL || process.env.VITE_PUBLIC_APP_URL || `http://localhost:${UPLOAD_PORT}/`;
 
 store.set('stationId', STATION_ID);
 
@@ -38,6 +37,34 @@ function sendToRenderer(channel, payload) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(channel, payload);
   }
+}
+
+function getStationAppBaseUrl() {
+  return localServer?.lanUrl || localServer?.localUrl || WEB_APP_URL;
+}
+
+function buildStationAppUrl(params = {}) {
+  const url = new URL(getStationAppBaseUrl());
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, String(value));
+  }
+  return url;
+}
+
+function stabilizeWindowUi(window) {
+  if (!window || window.isDestroyed()) return;
+  try { window.setAutoHideMenuBar(true); } catch {}
+  try { window.setMenuBarVisibility(false); } catch {}
+  const applyZoom = () => {
+    if (!window || window.isDestroyed()) return;
+    try { window.webContents.setZoomFactor(1); } catch {}
+    try {
+      const zoomLimits = window.webContents.setVisualZoomLevelLimits?.(1, 1);
+      if (zoomLimits && typeof zoomLimits.catch === 'function') zoomLimits.catch(() => {});
+    } catch {}
+  };
+  applyZoom();
+  window.webContents.on('did-finish-load', applyZoom);
 }
 
 function releaseMainWindowFocus() {
@@ -110,6 +137,7 @@ async function createMainWindow() {
       nodeIntegration: false
     }
   });
+  stabilizeWindowUi(mainWindow);
 
   if (windowState.isMaximized) {
     mainWindow.maximize();
@@ -130,10 +158,11 @@ async function createMainWindow() {
   mainWindow.on('maximize', saveWindowState);
   mainWindow.on('unmaximize', saveWindowState);
 
-  const url = new URL(WEB_APP_URL);
-  url.searchParams.set('desktop', 'defense');
-  url.searchParams.set('role', 'student');
-  url.searchParams.set('station', STATION_ID);
+  const url = buildStationAppUrl({
+    desktop: 'defense',
+    role: 'student',
+    station: STATION_ID
+  });
 
   await mainWindow.loadURL(url.toString()).catch(async () => {
     await mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
@@ -162,7 +191,7 @@ function openDisplayFullscreen(command = {}) {
     show: false,
     autoHideMenuBar: true,
     frame: false,
-    backgroundColor: '#111827',
+    backgroundColor: '#eaf2ff',
     icon: getAppIconPath(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -170,6 +199,7 @@ function openDisplayFullscreen(command = {}) {
       nodeIntegration: false
     }
   });
+  stabilizeWindowUi(displayWindow);
   displayWindowReadyPromise = new Promise((resolve) => {
     displayWindow.once('ready-to-show', () => {
       bringDisplayToFront();
@@ -181,12 +211,13 @@ function openDisplayFullscreen(command = {}) {
     displayWindow = undefined;
   });
 
-  const url = new URL(WEB_APP_URL);
-  url.searchParams.set('desktop', 'defense');
-  url.searchParams.set('role', 'display');
-  url.searchParams.set('kiosk', '1');
-  url.searchParams.set('station', STATION_ID);
-  if (command.sessionId) url.searchParams.set('session', command.sessionId);
+  const url = buildStationAppUrl({
+    desktop: 'defense',
+    role: 'display',
+    kiosk: '1',
+    station: STATION_ID,
+    session: command.sessionId || ''
+  });
   const loadPromise = displayWindow.loadURL(url.toString()).catch(() => {
     return displayWindow.loadFile(path.join(__dirname, 'renderer', 'display.html'), {
       query: {
@@ -325,6 +356,7 @@ function openPdfFullscreen(pdfPath, command = {}) {
       nodeIntegration: false
     }
   });
+  stabilizeWindowUi(presentationWindow);
   presentationWindow.setAlwaysOnTop(true, 'screen-saver');
   presentationWindow.once('ready-to-show', () => {
     releaseMainWindowFocus();
@@ -609,18 +641,19 @@ async function openUploadPage(command = {}) {
     await createMainWindow();
   }
 
-  const base = uploadServer?.lanUrl || uploadServer?.localUrl || `http://localhost:${UPLOAD_PORT}`;
+  const base = localServer?.lanUrl || localServer?.localUrl || `http://localhost:${UPLOAD_PORT}`;
   const url = new URL(`${base.replace(/\/+$/, '')}/upload-page`);
   url.searchParams.set('sessionId', command.sessionId || '');
   url.searchParams.set('studentId', command.studentId || '');
   if (command.studentName) url.searchParams.set('studentName', command.studentName);
   if (command.zoomUrl) url.searchParams.set('zoomUrl', command.zoomUrl);
 
-  const returnUrl = new URL(WEB_APP_URL);
-  returnUrl.searchParams.set('desktop', 'defense');
-  returnUrl.searchParams.set('role', 'student');
-  returnUrl.searchParams.set('station', STATION_ID);
-  if (command.sessionId) returnUrl.searchParams.set('session', command.sessionId);
+  const returnUrl = buildStationAppUrl({
+    desktop: 'defense',
+    role: 'student',
+    station: STATION_ID,
+    session: command.sessionId || ''
+  });
   url.searchParams.set('returnUrl', returnUrl.toString());
 
   if (mainWindow.isMinimized()) mainWindow.restore();
@@ -628,29 +661,26 @@ async function openUploadPage(command = {}) {
   mainWindow.maximize();
   mainWindow.moveTop();
   mainWindow.focus();
-  await mainWindow.loadURL(returnUrl.toString());
+  await mainWindow.loadURL(url.toString());
 }
 
 async function startAgent() {
-  if (!firebase) firebase = await createFirebaseClient();
-
-  agent = new FirestoreAgent({
-    firebase,
+  localServer = createLocalServer({
+    port: UPLOAD_PORT,
     stationId: STATION_ID,
     stationName: STATION_NAME,
-    uploadUrl: '',
-    lanUploadUrl: '',
     zoomUrl: ZOOM_URL,
     sendToRenderer,
-    openPdfFullscreen,
     openPresentationFullscreen,
     openUploadPage,
     openDisplayFullscreen,
     closeDisplayFullscreen,
-    closePresentationFullscreen
+    closePresentationFullscreen,
+    openZoom: (targetZoomUrl) => openZoomMeeting(shell, targetZoomUrl || ZOOM_URL)
   });
 
-  await agent.start();
+  agent = localServer;
+  await localServer.start();
 
   if (!powerBlockerId) {
     powerBlockerId = powerSaveBlocker.start('prevent-display-sleep');
@@ -659,8 +689,9 @@ async function startAgent() {
   sendToRenderer('agent-ready', {
     stationId: STATION_ID,
     stationName: STATION_NAME,
-    uploadUrl: '',
-    lanUploadUrl: '',
+    uploadUrl: localServer.localUrl,
+    lanUploadUrl: localServer.lanUrl,
+    dbPath: localServer.dbPath,
     storageRoot: getStorageRoot(),
     addresses: getLocalIPv4Addresses()
   });
@@ -668,13 +699,14 @@ async function startAgent() {
 
 app.whenReady().then(async () => {
   const { session } = require('electron');
+  Menu.setApplicationMenu(null);
   await session.defaultSession.clearCache();
-  await createMainWindow();
   try {
     await startAgent();
   } catch (error) {
     sendToRenderer('agent-error', { error: error.message });
   }
+  await createMainWindow();
 });
 
 app.on('window-all-closed', () => {
@@ -690,8 +722,9 @@ app.on('before-quit', () => {
 ipcMain.handle('agent:get-status', async () => ({
   stationId: STATION_ID,
   stationName: STATION_NAME,
-  uploadUrl: '',
-  lanUploadUrl: '',
+  uploadUrl: localServer?.localUrl || `http://localhost:${UPLOAD_PORT}`,
+  lanUploadUrl: localServer?.lanUrl || `http://${getPreferredLocalAddress()}:${UPLOAD_PORT}`,
+  dbPath: localServer?.dbPath || '',
   storageRoot: getStorageRoot(),
   addresses: getLocalIPv4Addresses()
 }));
